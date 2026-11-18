@@ -1,38 +1,35 @@
-**File:** `app/intent/route.ts`
+import { NextRequest, NextResponse } from "next/server";
 
-```typescript
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-import { NextResponse } from "next/server";
-
-const FREELANCER_API =
+const API_URL =
   "https://www.freelancer.com/api/projects/0.1/projects/active/";
 
-const MINIMUM_BUDGET_USD = 5000;
+const VERSION = "7.0.0";
 
-const COUNTRIES = [
-  { name: "United States", code: "US", aliases: ["United States", "USA"] },
-  { name: "Canada", code: "CA", aliases: ["Canada"] },
-  { name: "United Kingdom", code: "GB", aliases: ["United Kingdom", "UK", "Britain"] },
-  { name: "Ireland", code: "IE", aliases: ["Ireland"] },
-  { name: "Malta", code: "MT", aliases: ["Malta"] },
-  { name: "Australia", code: "AU", aliases: ["Australia"] },
-  { name: "New Zealand", code: "NZ", aliases: ["New Zealand"] },
-  { name: "Fiji", code: "FJ", aliases: ["Fiji"] },
-  { name: "Papua New Guinea", code: "PG", aliases: ["Papua New Guinea"] },
-  { name: "United Arab Emirates", code: "AE", aliases: ["United Arab Emirates", "UAE"] },
-  { name: "India", code: "IN", aliases: ["India"] },
-  { name: "Singapore", code: "SG", aliases: ["Singapore"] },
-  { name: "Philippines", code: "PH", aliases: ["Philippines"] },
-  { name: "Malaysia", code: "MY", aliases: ["Malaysia"] },
-  { name: "Jamaica", code: "JM", aliases: ["Jamaica"] },
-  { name: "Trinidad and Tobago", code: "TT", aliases: ["Trinidad and Tobago"] },
-  { name: "Barbados", code: "BB", aliases: ["Barbados"] },
-  { name: "Bahamas", code: "BS", aliases: ["Bahamas"] },
-  { name: "Belize", code: "BZ", aliases: ["Belize"] },
-  { name: "Guyana", code: "GY", aliases: ["Guyana"] },
-];
+const COUNTRIES: Record<string, string> = {
+  US: "United States",
+  CA: "Canada",
+  GB: "United Kingdom",
+  IE: "Ireland",
+  MT: "Malta",
+  AU: "Australia",
+  NZ: "New Zealand",
+  FJ: "Fiji",
+  PG: "Papua New Guinea",
+  AE: "United Arab Emirates",
+  IN: "India",
+  SG: "Singapore",
+  PH: "Philippines",
+  MY: "Malaysia",
+  JM: "Jamaica",
+  TT: "Trinidad and Tobago",
+  BB: "Barbados",
+  BS: "Bahamas",
+  BZ: "Belize",
+  GY: "Guyana",
+};
 
 const SEARCH_TERMS = [
   "software development",
@@ -43,492 +40,440 @@ const SEARCH_TERMS = [
   "MVP SaaS",
 ];
 
-const SERVICE_TERMS =
-  /\b(software|website|web application|web development|mobile app|mobile application|android|ios|MVP|SaaS|AI development|artificial intelligence|machine learning|automation|blockchain|web3|custom application|enterprise software|IT outsourcing|dedicated development team|e-commerce platform|application development)\b/i;
+const SERVICE_TERMS = [
+  "software",
+  "website",
+  "web development",
+  "web application",
+  "mobile app",
+  "android",
+  "ios",
+  "blockchain",
+  "web3",
+  "artificial intelligence",
+  "AI automation",
+  "machine learning",
+  "MVP",
+  "SaaS",
+  "application development",
+  "app development",
+  "custom development",
+  "IT outsourcing",
+  "dedicated developer",
+];
 
-const BUYING_TERMS =
-  /\b(looking for|need|require|required|seeking|want to build|want to develop|hire|hiring|build me|develop for us|development partner|development company|development team|project requirement|project scope|new application|new website|new platform)\b/i;
-
-const EXCLUDED_TERMS =
-  /\b(hire me|looking for a job|seeking employment|open to work|available for work|my portfolio|my services|we provide software|we offer development|our development services|SEO services|digital marketing agency|job vacancy|job opening|salary|internship|tutorial|homework|student project|volunteer|unpaid work|course|training)\b/i;
-
-function classifyType(text: string) {
-  if (/\b(RFP|request for proposal|tender|RFQ)\b/i.test(text)) {
-    return "RFP_OR_TENDER";
-  }
-
-  if (/\b(vendor|supplier|agency|development partner|service provider)\b/i.test(text)) {
-    return "VENDOR_REQUEST";
-  }
-
-  return "PROJECT_OPPORTUNITY";
-}
-
-function extractBudget(project: any) {
-  const budget = project?.budget;
-
-  if (!budget || typeof budget.minimum !== "number") {
-    return {
-      amount: null,
-      minimum: null,
-      maximum: null,
-      currency: null,
-      currencyId: null,
-      status: "UNKNOWN",
-      meetsMinimum: false,
-    };
-  }
-
-  const currencyId =
-    typeof budget.currency_id === "number"
-      ? budget.currency_id
-      : null;
-
-  return {
-    amount: budget.minimum,
-    minimum: budget.minimum,
-    maximum:
-      typeof budget.maximum === "number"
-        ? budget.maximum
-        : null,
-    currency: null,
-    currencyId,
-    status: "EXPLICIT_AMOUNT_CURRENCY_UNVERIFIED",
-    meetsMinimum: false,
+type FreelancerProject = {
+  id?: number | string;
+  title?: string;
+  description?: string;
+  preview_description?: string;
+  seo_url?: string;
+  status?: string;
+  time_submitted?: number | string;
+  time_updated?: number | string;
+  currency?: {
+    id?: number | string;
+    code?: string;
+    sign?: string;
   };
+  budget?: {
+    minimum?: number | string;
+    maximum?: number | string;
+    name?: string;
+    project_type?: string;
+    currency_id?: number | string;
+  };
+  location?: {
+    country?: {
+      code?: string;
+      name?: string;
+    };
+  };
+};
+
+type Signal = {
+  id: string;
+  title: string;
+  organisation: string;
+  source: string;
+  sourceUrl: string;
+  publishedAt: string;
+  country: string;
+  countryCode: string;
+  intentType: string;
+  evidence: string;
+  matchedTerms: string[];
+  confidence: number;
+  status: string;
+};
+
+function asText(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }
 
-function identifyCountry(project: any) {
-  const code = String(
-    project?.location?.country?.code || ""
+function asNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function extractProjects(data: unknown): FreelancerProject[] {
+  const found: FreelancerProject[] = [];
+  const seen = new Set<string>();
+
+  function visit(value: unknown, depth: number): void {
+    if (depth > 8 || value === null || value === undefined) {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        visit(item, depth + 1);
+      }
+
+      return;
+    }
+
+    if (typeof value !== "object") {
+      return;
+    }
+
+    const object = value as Record<string, unknown>;
+
+    const looksLikeProject =
+      object.id !== undefined &&
+      typeof object.title === "string" &&
+      (object.budget !== undefined ||
+        object.description !== undefined ||
+        object.preview_description !== undefined);
+
+    if (looksLikeProject) {
+      const project = object as FreelancerProject;
+      const id = String(project.id);
+
+      if (!seen.has(id)) {
+        seen.add(id);
+        found.push(project);
+      }
+
+      return;
+    }
+
+    for (const child of Object.values(object)) {
+      visit(child, depth + 1);
+    }
+  }
+
+  visit(data, 0);
+
+  return found;
+}
+
+function getProjectUrl(project: FreelancerProject): string {
+  const id = project.id ? String(project.id) : "";
+
+  const slug = asText(project.seo_url).trim();
+
+  if (slug.startsWith("https://") || slug.startsWith("http://")) {
+    return slug;
+  }
+
+  if (slug) {
+    return `https://www.freelancer.com/projects/${slug}`;
+  }
+
+  if (id) {
+    return `https://www.freelancer.com/projects/${id}`;
+  }
+
+  return "https://www.freelancer.com/search/projects";
+}
+
+function getPublishedDate(project: FreelancerProject): string {
+  const submitted = asNumber(project.time_submitted);
+
+  if (submitted !== null) {
+    const milliseconds = submitted > 10_000_000_000
+      ? submitted
+      : submitted * 1000;
+
+    const date = new Date(milliseconds);
+
+    if (!Number.isNaN(date.getTime())) {
+      return date.toISOString();
+    }
+  }
+
+  return new Date().toISOString();
+}
+
+function findMatchedTerms(text: string): string[] {
+  const lowerText = text.toLowerCase();
+
+  return SERVICE_TERMS.filter((term) =>
+    lowerText.includes(term.toLowerCase())
+  );
+}
+
+function makeSignal(
+  project: FreelancerProject,
+  requestedCountryCode: string
+): Signal | null {
+  const title = asText(project.title).trim();
+
+  const description =
+    asText(project.description).trim() ||
+    asText(project.preview_description).trim();
+
+  if (!title) {
+    return null;
+  }
+
+  const projectCountryCode = asText(
+    project.location?.country?.code
   ).toUpperCase();
 
-  if (!code) return null;
-
-  return COUNTRIES.find(country => country.code === code) || null;
-}
-
-function getProjectUrl(project: any) {
-  if (project.seo_url) {
-    return `https://www.freelancer.com/projects/${project.seo_url}`;
-  }
-
-  return `https://www.freelancer.com/projects/${project.id}`;
-}
-
-function makeSignal(project: any, selectedCountry: string) {
-  const title = String(project?.title || "");
-  const description = String(
-    project?.description ||
-    project?.preview_description ||
-    ""
-  );
-
-  const text = `${title}\n${description}`;
-
-  if (!project?.id || !title || !description) {
+  // Never assign a country when the API has not identified it.
+  // Never accept a project from a different country.
+  if (projectCountryCode !== requestedCountryCode) {
     return null;
   }
 
-  if (project.status !== "active") {
+  const combinedText = `${title} ${description}`;
+  const matchedTerms = findMatchedTerms(combinedText);
+
+  if (matchedTerms.length === 0) {
     return null;
   }
 
-  if (EXCLUDED_TERMS.test(text)) {
-    return null;
-  }
+  const minimum = asNumber(project.budget?.minimum);
+  const maximum = asNumber(project.budget?.maximum);
 
-  if (!SERVICE_TERMS.test(text)) {
-    return null;
-  }
+  const hasBudget = minimum !== null || maximum !== null;
 
-  const country = identifyCountry(project);
+  let confidence = 60;
 
-  // Never guess the project country.
-  if (!country || country.code !== selectedCountry) {
-    return null;
-  }
-
-  const budget = extractBudget(project);
-
-  const directBuyingIntent = BUYING_TERMS.test(text);
-
-  let confidence = 70;
-
-  if (SERVICE_TERMS.test(title)) {
+  if (matchedTerms.length >= 2) {
     confidence += 10;
   }
 
-  if (directBuyingIntent) {
+  if (description.length > 100) {
     confidence += 5;
   }
 
-  if (budget.status !== "UNKNOWN") {
+  if (hasBudget) {
     confidence += 5;
   }
 
-  confidence = Math.min(confidence, 90);
+  confidence = Math.min(confidence, 80);
 
-  const organisation =
-    project.owner_info?.username ||
-    project.owner_info?.public_name ||
-    null;
+  const budgetEvidence = hasBudget
+    ? `Budget listed by Freelancer: minimum ${minimum ?? "not specified"}, maximum ${maximum ?? "not specified"}. Currency has not been independently verified.`
+    : "No explicit budget amount was identified.";
 
-  const publishedAt = project.time_submitted
-    ? new Date(project.time_submitted * 1000).toISOString()
-    : null;
+  const evidence = [
+    `Freelancer project listing: ${title}.`,
+    description,
+    budgetEvidence,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const projectId = String(project.id ?? title);
 
   return {
-    id: `freelancer-${project.id}`,
-
+    id: `freelancer-${projectId}`,
     title,
-
-    organisation,
-
+    organisation: "Freelancer project owner (organisation not independently verified)",
     source: "Freelancer",
-
     sourceUrl: getProjectUrl(project),
-
-    publishedAt,
-
-    country: country.name,
-
-    countryCode: country.code,
-
-    intentType: classifyType(text),
-
-    evidence: description.slice(0, 2500),
-
-    matchedTerms: [
-      ...new Set(
-        text.match(
-          /\b(software|website|developer|development|mobile app|android|ios|MVP|SaaS|AI|automation|blockchain|web3)\b/gi
-        ) || []
-      ),
-    ],
-
+    publishedAt: getPublishedDate(project),
+    country: COUNTRIES[requestedCountryCode],
+    countryCode: requestedCountryCode,
+    intentType: "PROJECT_OPPORTUNITY",
+    evidence,
+    matchedTerms,
     confidence,
-
-    status: "ACTIVE_FREELANCER_PROJECT",
-
-    budget,
-
-    buyerClassification: "POTENTIAL_BUYER",
-
-    verificationStatus: "NOT_VERIFIED",
-
-    decisionMakerStatus: "NOT_VERIFIED",
-
-    category: "DIRECT_BUYER",
-
-    marketplace: {
-      projectId: project.id,
-      projectStatus: project.status,
-      projectType: project.type || null,
-      bidCount: project.bid_stats?.bid_count ?? null,
-      averageBid: project.bid_stats?.bid_avg ?? null,
-      ownerId: project.owner_id ?? null,
-      ownerCountry:
-        project.owner_info?.country?.name ?? null,
-    },
+    status: "POTENTIAL_BUYER",
   };
 }
 
 async function searchFreelancer(
-  countryCode: string
-) {
+  token: string,
+  countryCode: string,
+  searchTerm: string
+): Promise<{
+  projects: FreelancerProject[];
+  error?: string;
+}> {
+  const params = new URLSearchParams();
+
+  params.set("query", searchTerm);
+  params.append("countries[]", countryCode.toLowerCase());
+  params.append("project_types[]", "fixed");
+  params.append("project_types[]", "hourly");
+  params.set("full_description", "true");
+  params.set("job_details", "true");
+  params.set("user_details", "true");
+  params.set("location_details", "true");
+  params.set("limit", "30");
+  params.set("offset", "0");
+
+  const url = `${API_URL}?${params.toString()}`;
+
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        "Freelancer-OAuth-V1": token,
+        Accept: "application/json",
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(20000),
+    });
+
+    if (!response.ok) {
+      return {
+        projects: [],
+        error: `Freelancer returned HTTP ${response.status}.`,
+      };
+    }
+
+    const data: unknown = await response.json();
+
+    return {
+      projects: extractProjects(data),
+    };
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unknown request error";
+
+    return {
+      projects: [],
+      error: message,
+    };
+  }
+}
+
+export async function GET(request: NextRequest) {
   const token = process.env.FREELANCER_ACCESS_TOKEN;
 
   if (!token) {
-    return {
-      results: [],
-      errors: ["FREELANCER_ACCESS_TOKEN is not configured."],
-      requestCount: 0,
-    };
-  }
-
-  const results: any[] = [];
-  const errors: string[] = [];
-
-  const country = COUNTRIES.find(
-    item => item.code === countryCode
-  );
-
-  if (!country) {
-    return {
-      results,
-      errors: ["Unsupported country."],
-      requestCount: 0,
-    };
-  }
-
-  // One authenticated request for each targeted search term.
-  // Requests are sequential to reduce rate-limit pressure.
-  for (const query of SEARCH_TERMS) {
-    const params = new URLSearchParams();
-
-    params.set("query", query);
-
-    params.append(
-      "countries[]",
-      countryCode.toLowerCase()
-    );
-
-    params.set("project_types[]", "fixed");
-    params.append("project_types[]", "hourly");
-
-    params.set("full_description", "true");
-    params.set("job_details", "true");
-    params.set("user_details", "true");
-    params.set("location_details", "true");
-
-    params.set("limit", "30");
-    params.set("offset", "0");
-
-    const url = `${FREELANCER_API}?${params.toString()}`;
-
-    try {
-      const response = await fetch(url, {
-        method: "GET",
-
-        headers: {
-          "freelancer-oauth-v1": token,
-          Accept: "application/json",
-        },
-
-        // Cache responses for five minutes.
-        next: {
-          revalidate: 300,
-        },
-
-        signal: AbortSignal.timeout(12000),
-      });
-
-      if (!response.ok) {
-        errors.push(
-          `Freelancer "${query}" HTTP ${response.status}`
-        );
-
-        continue;
-      }
-
-      const data = await response.json();
-
-      if (data.status !== "success") {
-        errors.push(
-          `Freelancer "${query}" returned an unsuccessful response.`
-        );
-
-        continue;
-      }
-
-      const projects =
-        data.result?.projects ||
-        data.result?.items ||
-        (Array.isArray(data.result)
-          ? data.result
-          : []);
-
-      for (const project of projects) {
-        const signal = makeSignal(
-          project,
-          countryCode
-        );
-
-        if (signal) {
-          results.push(signal);
-        }
-      }
-    } catch (error) {
-      errors.push(
-        error instanceof Error
-          ? `Freelancer "${query}": ${error.message}`
-          : `Freelancer "${query}" search failed.`
-      );
-    }
-  }
-
-  return {
-    results,
-    errors,
-    requestCount: SEARCH_TERMS.length,
-  };
-}
-
-export async function GET(request: Request) {
-  try {
-    const { searchParams } = new URL(request.url);
-
-    const countryCode = (
-      searchParams.get("country") || "US"
-    ).toUpperCase();
-
-    const requestedType =
-      searchParams.get("type") || "";
-
-    const minConfidence = Math.max(
-      0,
-      Math.min(
-        100,
-        Number(searchParams.get("minConfidence") || 60)
-      )
-    );
-
-    const country = COUNTRIES.find(
-      item => item.code === countryCode
-    );
-
-    if (!country) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Country is not approved.",
-          approvedCountries: COUNTRIES,
-        },
-        { status: 400 }
-      );
-    }
-
-    const allowedTypes = [
-      "",
-      "RFP_OR_TENDER",
-      "VENDOR_REQUEST",
-      "PROJECT_OPPORTUNITY",
-    ];
-
-    if (!allowedTypes.includes(requestedType)) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Invalid opportunity type.",
-        },
-        { status: 400 }
-      );
-    }
-
-    const freelancer = await searchFreelancer(
-      countryCode
-    );
-
-    const unique = new Map<string, any>();
-
-    for (const signal of freelancer.results) {
-      if (signal.confidence < minConfidence) {
-        continue;
-      }
-
-      if (
-        requestedType &&
-        signal.intentType !== requestedType
-      ) {
-        continue;
-      }
-
-      unique.set(signal.id, signal);
-    }
-
-    const signals = Array.from(
-      unique.values()
-    ).sort((a, b) => {
-      return (
-        new Date(b.publishedAt || 0).getTime() -
-        new Date(a.publishedAt || 0).getTime()
-      );
-    });
-
-    return NextResponse.json({
-      success: true,
-
-      platform: "GODSLEAD",
-
-      engine: "FREELANCER OFFICIAL PROJECT DISCOVERY",
-
-      version: "6.0.0",
-
-      generatedAt: new Date().toISOString(),
-
-      configuration: {
-        country: country.name,
-        countryCode,
-
-        minimumBudgetUSD: MINIMUM_BUDGET_USD,
-
-        minimumConfidence: minConfidence,
-
-        approvedCountries: COUNTRIES,
-
-        services: [
-          "Software development",
-          "Website development",
-          "Web applications",
-          "Android and iOS applications",
-          "AI and machine learning",
-          "Automation",
-          "Blockchain and Web3",
-          "MVP and SaaS development",
-          "Enterprise software",
-          "IT outsourcing",
-        ],
-      },
-
-      sources: [
-        {
-          name: "Freelancer",
-          access: "Authenticated Official API",
-          endpoint:
-            "/projects/0.1/projects/active/",
-          results: signals.length,
-          requests: freelancer.requestCount,
-        },
-      ],
-
-      summary: {
-        totalSignals: signals.length,
-
-        directBuyerSignals: signals.length,
-
-        businessOpportunities: 0,
-
-        budgetConfirmed: signals.filter(
-          item =>
-            item.budget.meetsMinimum
-        ).length,
-
-        budgetUnknown: signals.filter(
-          item =>
-            item.budget.status === "UNKNOWN" ||
-            item.budget.status ===
-              "EXPLICIT_AMOUNT_CURRENCY_UNVERIFIED"
-        ).length,
-
-        verifiedBuyers: 0,
-
-        potentialBuyers: signals.length,
-      },
-
-      signals,
-
-      diagnostics: {
-        errors: freelancer.errors,
-      },
-
-      message:
-        "Freelancer active projects are genuine marketplace project listings. They are potential buying opportunities, not independently verified organisations, budgets or decision-makers. Currency must be verified before treating a budget as USD 5,000 or more.",
-    });
-  } catch (error) {
     return NextResponse.json(
       {
         success: false,
-
-        platform: "GODSLEAD",
-
-        error:
-          error instanceof Error
-            ? error.message
-            : "Unexpected server error.",
+        version: VERSION,
+        error: "FREELANCER_ACCESS_TOKEN is not configured.",
+        instructions:
+          "Add FREELANCER_ACCESS_TOKEN to the Vercel Production environment variables and redeploy.",
+        data: {
+          signals: [],
+        },
       },
-      { status: 500 }
+      { status: 503 }
     );
   }
+
+  const requestedCountry = (
+    request.nextUrl.searchParams.get("country") || "US"
+  ).toUpperCase();
+
+  if (!COUNTRIES[requestedCountry]) {
+    return NextResponse.json(
+      {
+        success: false,
+        version: VERSION,
+        error: `Unsupported country code: ${requestedCountry}`,
+        supportedCountries: Object.keys(COUNTRIES),
+        data: {
+          signals: [],
+        },
+      },
+      { status: 400 }
+    );
+  }
+
+  const minConfidence = Math.max(
+    0,
+    Math.min(
+      100,
+      Number(request.nextUrl.searchParams.get("minConfidence") || 0)
+    )
+  );
+
+  const allProjects: FreelancerProject[] = [];
+  const errors: string[] = [];
+  const successfulSearches: string[] = [];
+
+  for (const searchTerm of SEARCH_TERMS) {
+    const result = await searchFreelancer(
+      token,
+      requestedCountry,
+      searchTerm
+    );
+
+    if (result.error) {
+      errors.push(`${searchTerm}: ${result.error}`);
+      continue;
+    }
+
+    successfulSearches.push(searchTerm);
+    allProjects.push(...result.projects);
+  }
+
+  const uniqueProjects = new Map<string, FreelancerProject>();
+
+  for (const project of allProjects) {
+    if (project.id !== undefined) {
+      uniqueProjects.set(String(project.id), project);
+    }
+  }
+
+  const signals = Array.from(uniqueProjects.values())
+    .map((project) => makeSignal(project, requestedCountry))
+    .filter((signal): signal is Signal => signal !== null)
+    .filter((signal) => signal.confidence >= minConfidence)
+    .sort((a, b) => {
+      const dateA = new Date(a.publishedAt).getTime();
+      const dateB = new Date(b.publishedAt).getTime();
+
+      return dateB - dateA;
+    });
+
+  return NextResponse.json({
+    success: true,
+    version: VERSION,
+    source: "Freelancer API",
+    country: {
+      code: requestedCountry,
+      name: COUNTRIES[requestedCountry],
+    },
+    diagnostics: {
+      searchesAttempted: SEARCH_TERMS.length,
+      searchesSuccessful: successfulSearches.length,
+      projectsReceived: allProjects.length,
+      uniqueProjects: uniqueProjects.size,
+      matchingSignals: signals.length,
+      errors,
+    },
+    summary: {
+      totalSignals: signals.length,
+      verifiedBuyers: 0,
+      potentialBuyers: signals.length,
+      rejectedBuyers: 0,
+    },
+    data: {
+      signals,
+    },
+  });
 }
-```
