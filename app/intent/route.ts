@@ -5,40 +5,42 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const MARKETS = [
-  { name: "United States", code: "US", locale: "US:en" },
-  { name: "Canada", code: "CA", locale: "CA:en" },
-  { name: "United Kingdom", code: "GB", locale: "GB:en" },
-  { name: "Ireland", code: "IE", locale: "IE:en" },
-  { name: "Malta", code: "MT", locale: "MT:en" },
-  { name: "Australia", code: "AU", locale: "AU:en" },
-  { name: "New Zealand", code: "NZ", locale: "NZ:en" },
-  { name: "Fiji", code: "FJ", locale: "FJ:en" },
-  { name: "Papua New Guinea", code: "PG", locale: "PG:en" },
-  { name: "United Arab Emirates", code: "AE", locale: "AE:en" },
-  { name: "India", code: "IN", locale: "IN:en" },
-  { name: "Singapore", code: "SG", locale: "SG:en" },
-  { name: "Philippines", code: "PH", locale: "PH:en" },
-  { name: "Malaysia", code: "MY", locale: "MY:en" },
-  { name: "Jamaica", code: "JM", locale: "JM:en" },
-  { name: "Trinidad and Tobago", code: "TT", locale: "TT:en" },
-  { name: "Barbados", code: "BB", locale: "BB:en" },
-  { name: "Bahamas", code: "BS", locale: "BS:en" },
-  { name: "Belize", code: "BZ", locale: "BZ:en" },
-  { name: "Guyana", code: "GY", locale: "GY:en" }
+  { name: "United States", code: "US", aliases: ["united states", "usa", "u.s.", "america"] },
+  { name: "Canada", code: "CA", aliases: ["canada"] },
+  { name: "United Kingdom", code: "GB", aliases: ["united kingdom", "uk", "britain"] },
+  { name: "Ireland", code: "IE", aliases: ["ireland"] },
+  { name: "Malta", code: "MT", aliases: ["malta"] },
+  { name: "Australia", code: "AU", aliases: ["australia"] },
+  { name: "New Zealand", code: "NZ", aliases: ["new zealand"] },
+  { name: "Fiji", code: "FJ", aliases: ["fiji"] },
+  { name: "Papua New Guinea", code: "PG", aliases: ["papua new guinea"] },
+  { name: "United Arab Emirates", code: "AE", aliases: ["united arab emirates", "uae", "dubai", "abu dhabi"] },
+  { name: "India", code: "IN", aliases: ["india"] },
+  { name: "Singapore", code: "SG", aliases: ["singapore"] },
+  { name: "Philippines", code: "PH", aliases: ["philippines"] },
+  { name: "Malaysia", code: "MY", aliases: ["malaysia"] },
+  { name: "Jamaica", code: "JM", aliases: ["jamaica"] },
+  { name: "Trinidad and Tobago", code: "TT", aliases: ["trinidad and tobago"] },
+  { name: "Barbados", code: "BB", aliases: ["barbados"] },
+  { name: "Bahamas", code: "BS", aliases: ["bahamas"] },
+  { name: "Belize", code: "BZ", aliases: ["belize"] },
+  { name: "Guyana", code: "GY", aliases: ["guyana"] },
 ] as const;
 
 const SEARCH_TERMS = [
-  '"request for proposal" software development',
-  '"software development tender"',
-  '"IT services tender"',
-  '"website development tender"',
-  '"mobile app development tender"',
-  '"looking for software development company"',
-  '"seeking software development partner"',
-  '"custom software development" RFP',
-  '"technology vendor" procurement',
-  '"web application development" tender'
+  '"looking for a developer"',
+  '"looking for software developers"',
+  '"need a development team"',
+  '"looking for an agency" software',
+  '"need an MVP developer"',
+  '"seeking technical cofounder" development',
+  '"hire a software development company"',
+  '"looking for mobile app developers"',
+  '"need help building a SaaS"',
+  '"looking for web developers"',
 ];
+
+const MINIMUM_BUDGET_USD = 5000;
 
 type BuyerSignal = {
   id: string;
@@ -53,79 +55,48 @@ type BuyerSignal = {
   evidence: string;
   matchedTerms: string[];
   confidence: number;
-  status: string;
+  budget: number | null;
+  budgetCurrency: string | null;
+  budgetStatus: string;
+  buyerStatus: string;
 };
 
-function decodeXml(value: string): string {
+type AlgoliaHit = {
+  objectID?: string;
+  title?: string;
+  story_title?: string;
+  url?: string;
+  story_url?: string;
+  comment_text?: string;
+  story_text?: string;
+  author?: string;
+  created_at?: string;
+};
+
+function cleanText(value: string): string {
   return value
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/<[^>]*>/g, " ")
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
-function getTag(xml: string, tag: string): string {
-  const match = xml.match(
-    new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, "i")
-  );
+function identifyCountry(text: string) {
+  const normalised = ` ${text.toLowerCase()} `;
 
-  return match ? decodeXml(match[1]) : "";
-}
+  for (const market of MARKETS) {
+    const found = market.aliases.some(alias => {
+      return normalised.includes(` ${alias} `);
+    });
 
-function cleanText(value: string): string {
-  return value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-}
-
-function classifyIntent(title: string, description: string) {
-  const text = `${title} ${description}`.toLowerCase();
-
-  const groups = [
-    {
-      type: "RFP_OR_TENDER",
-      confidence: 95,
-      terms: [
-        "request for proposal",
-        "request for quotation",
-        "software development tender",
-        "it services tender",
-        "invitation to tender",
-        "procurement notice",
-        "request for bids"
-      ]
-    },
-    {
-      type: "VENDOR_REQUEST",
-      confidence: 85,
-      terms: [
-        "looking for software development company",
-        "seeking software development partner",
-        "looking for a software developer",
-        "seeking a technology vendor"
-      ]
-    },
-    {
-      type: "PROJECT_OPPORTUNITY",
-      confidence: 65,
-      terms: [
-        "website development tender",
-        "mobile app development tender",
-        "custom software development",
-        "digital transformation project"
-      ]
-    }
-  ];
-
-  for (const group of groups) {
-    const matched = group.terms.filter(term => text.includes(term));
-
-    if (matched.length) {
+    if (found) {
       return {
-        type: group.type,
-        confidence: group.confidence,
-        matchedTerms: matched
+        name: market.name,
+        code: market.code,
       };
     }
   }
@@ -133,81 +104,190 @@ function classifyIntent(title: string, description: string) {
   return null;
 }
 
-function extractOrganisation(title: string): string | null {
-  const match = title.match(
-    /(?:by|from|issued by|published by)\s+([A-Z][A-Za-z0-9&.,' -]{2,60})/
-  );
+function extractBudget(text: string) {
+  const patterns = [
+    /(?:USD|US\$|\$)\s?([\d,]+(?:\.\d+)?)\s?(k)?/i,
+    /([\d,]+(?:\.\d+)?)\s?(k)?\s?(?:USD|US dollars)/i,
+  ];
 
-  return match?.[1]?.trim() || null;
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+
+    if (!match) continue;
+
+    let amount = Number(match[1].replace(/,/g, ""));
+
+    if (match[2]?.toLowerCase() === "k") {
+      amount *= 1000;
+    }
+
+    if (Number.isFinite(amount)) {
+      return {
+        amount,
+        currency: "USD",
+      };
+    }
+  }
+
+  return {
+    amount: null,
+    currency: null,
+  };
 }
 
-async function searchMarket(
-  market: typeof MARKETS[number],
-  term: string
-): Promise<BuyerSignal[]> {
-  const url =
-    `https://news.google.com/rss/search?q=${encodeURIComponent(term)}` +
-    `&hl=en&gl=${market.code}&ceid=${market.locale}`;
+function classifyRequirement(text: string) {
+  const rules = [
+    {
+      type: "MVP_DEVELOPMENT",
+      terms: ["mvp developer", "build an mvp", "mvp development"],
+    },
+    {
+      type: "MOBILE_APP",
+      terms: ["mobile app developer", "mobile application", "ios app", "android app"],
+    },
+    {
+      type: "WEB_DEVELOPMENT",
+      terms: ["web developer", "website development", "web application"],
+    },
+    {
+      type: "AI_DEVELOPMENT",
+      terms: ["ai development", "machine learning", "ai automation"],
+    },
+    {
+      type: "SOFTWARE_DEVELOPMENT",
+      terms: [
+        "software developer",
+        "software development company",
+        "development team",
+        "build a saas",
+        "looking for a developer",
+        "hire a developer",
+      ],
+    },
+  ];
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10000);
+  const lower = text.toLowerCase();
+
+  for (const rule of rules) {
+    const matched = rule.terms.filter(term => lower.includes(term));
+
+    if (matched.length > 0) {
+      return {
+        type: rule.type,
+        matched,
+      };
+    }
+  }
+
+  return null;
+}
+
+async function searchSource(term: string): Promise<BuyerSignal[]> {
+  const url = new URL(
+    "https://hn.algolia.com/api/v1/search"
+  );
+
+  url.searchParams.set("query", term);
+  url.searchParams.set("tags", "story,comment");
+  url.searchParams.set("hitsPerPage", "50");
 
   try {
-    const response = await fetch(url, {
+    const response = await fetch(url.toString(), {
       headers: {
-        "User-Agent": "GODSLEAD-InfoDart-Global/1.0"
+        Accept: "application/json",
+        "User-Agent": "GODSLEAD-InfoDart/1.0",
       },
-      signal: controller.signal,
-      cache: "no-store"
+      cache: "no-store",
+      signal: AbortSignal.timeout(15000),
     });
 
-    if (!response.ok) return [];
+    if (!response.ok) {
+      return [];
+    }
 
-    const xml = await response.text();
+    const data = await response.json();
 
-    const items =
-      xml.match(/<item(?:\s[^>]*)?>[\s\S]*?<\/item>/gi) || [];
+    const hits: AlgoliaHit[] = data.hits || [];
 
     const signals: BuyerSignal[] = [];
 
-    for (const item of items) {
-      const title = cleanText(getTag(item, "title"));
-      const link = getTag(item, "link");
-      const description = cleanText(getTag(item, "description"));
+    for (const hit of hits) {
+      const title = cleanText(
+        hit.title || hit.story_title || ""
+      );
 
-      if (!title || !link) continue;
+      const description = cleanText(
+        hit.comment_text || hit.story_text || ""
+      );
 
-      const intent = classifyIntent(title, description);
+      const combined = `${title} ${description}`;
 
-      if (!intent) continue;
+      if (!combined.trim()) continue;
 
-      const published = getTag(item, "pubDate");
+      const requirement = classifyRequirement(combined);
+
+      if (!requirement) continue;
+
+      const country = identifyCountry(combined);
+
+      // Never guess a buyer's country.
+      if (!country) continue;
+
+      const budget = extractBudget(combined);
+
+      let buyerStatus = "POTENTIAL_BUYER";
+
+      if (
+        budget.amount !== null &&
+        budget.amount < MINIMUM_BUDGET_USD
+      ) {
+        buyerStatus = "REJECTED";
+      }
+
+      if (
+        budget.amount !== null &&
+        budget.amount >= MINIMUM_BUDGET_USD
+      ) {
+        buyerStatus = "VERIFIED_BUYER";
+      }
+
+      const id = hit.objectID || "";
+
+      if (!id) continue;
+
+      const sourceUrl = `https://news.ycombinator.com/item?id=${id}`;
+
+      const evidence = `${title}. ${description}`.slice(0, 1000);
 
       signals.push({
-        id: `${market.code}-${Buffer.from(link).toString("base64url").slice(0, 24)}`,
-        title,
-        organisation: extractOrganisation(title),
-        source: cleanText(getTag(item, "source")) || "Google News",
-        sourceUrl: link,
-        publishedAt:
-          published && !Number.isNaN(Date.parse(published))
-            ? new Date(published).toISOString()
-            : null,
-        country: market.name,
-        countryCode: market.code,
-        intentType: intent.type,
-        evidence: `${title}. ${description}`.slice(0, 700),
-        matchedTerms: intent.matchedTerms,
-        confidence: intent.confidence,
-        status: "NEEDS_REVIEW"
+        id: `HN-${id}`,
+        title: title || "Software development requirement",
+        organisation: null,
+        source: "Hacker News",
+        sourceUrl,
+        publishedAt: hit.created_at
+          ? new Date(hit.created_at).toISOString()
+          : null,
+        country: country.name,
+        countryCode: country.code,
+        intentType: requirement.type,
+        evidence,
+        matchedTerms: requirement.matched,
+        confidence: 60,
+        budget: budget.amount,
+        budgetCurrency: budget.currency,
+        budgetStatus:
+          budget.amount === null
+            ? "UNKNOWN"
+            : "STATED",
+        buyerStatus,
       });
     }
 
     return signals;
-  } catch {
+  } catch (error) {
+    console.error("GODSLEAD source error:", error);
     return [];
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -215,93 +295,77 @@ export async function GET(request: NextRequest) {
   try {
     const params = request.nextUrl.searchParams;
 
-    const requestedCountry = params.get("country");
-    const requestedType = params.get("type");
+    const requestedCountry = params.get("country")?.toUpperCase();
+    const requestedType = params.get("type")?.toUpperCase();
 
-    const minimumConfidence = Math.max(
-      0,
-      Math.min(100, Number(params.get("minConfidence") || 60))
-    );
+    const allowedMarket = requestedCountry
+      ? MARKETS.find(market => market.code === requestedCountry)
+      : null;
 
-    const selectedMarkets = requestedCountry
-      ? MARKETS.filter(
-          market => market.code === requestedCountry.toUpperCase()
-        )
-      : [...MARKETS];
-
-    if (requestedCountry && selectedMarkets.length === 0) {
+    if (requestedCountry && !allowedMarket) {
       return NextResponse.json(
         {
           success: false,
-          error: "Country not permitted by GODSLEAD targeting policy."
+          error: "Country is not permitted by GODSLEAD.",
+          signals: [],
         },
         { status: 403 }
       );
     }
 
-    const jobs = selectedMarkets.flatMap(market =>
-      SEARCH_TERMS.map(term => ({ market, term }))
+    const results = await Promise.all(
+      SEARCH_TERMS.map(term => searchSource(term))
     );
 
-    const allSignals: BuyerSignal[] = [];
+    const unique = new Map<string, BuyerSignal>();
 
-    for (let i = 0; i < jobs.length; i += 8) {
-      const batch = jobs.slice(i, i + 8);
-
-      const results = await Promise.all(
-        batch.map(({ market, term }) => searchMarket(market, term))
-      );
-
-      allSignals.push(...results.flat());
-    }
-
-    const uniqueSignals = new Map<string, BuyerSignal>();
-
-    for (const signal of allSignals) {
-      if (signal.confidence < minimumConfidence) continue;
-
+    for (const signal of results.flat()) {
       if (
-        requestedType &&
-        signal.intentType !== requestedType.toUpperCase()
+        requestedCountry &&
+        signal.countryCode !== requestedCountry
       ) {
         continue;
       }
 
-      if (!uniqueSignals.has(signal.sourceUrl)) {
-        uniqueSignals.set(signal.sourceUrl, signal);
+      if (
+        requestedType &&
+        signal.intentType !== requestedType
+      ) {
+        continue;
+      }
+
+      if (!unique.has(signal.id)) {
+        unique.set(signal.id, signal);
       }
     }
 
-    const signals = [...uniqueSignals.values()].sort(
-      (a, b) => b.confidence - a.confidence
+    const signals = [...unique.values()].filter(
+      signal => signal.buyerStatus !== "REJECTED"
     );
 
     return NextResponse.json({
       success: true,
       product: "GODSLEAD",
-      engine: "BUYER INTENT HUNTER",
-      version: "1.0.1",
-      searchedMarkets: selectedMarkets.map(market => market.name),
+      engine: "PRIVATE BUYER DISCOVERY",
+      version: "2.0.0",
+      source: "Hacker News Algolia Public API",
+      searchedMarkets: requestedCountry
+        ? [allowedMarket!.name]
+        : MARKETS.map(market => market.name),
       totalSignals: signals.length,
-      filters: {
-        country: requestedCountry || "ALL APPROVED COUNTRIES",
-        type: requestedType || "ALL",
-        minimumConfidence
-      },
+      minimumBudgetUSD: MINIMUM_BUDGET_USD,
       signals,
-      note: "These are preliminary public buying signals, not independently verified buyers. Check the original source before contacting prospects."
+      note:
+        "These are preliminary public buying signals. Country and budget information require independent verification. A stated budget alone does not establish a verified buyer.",
     });
-
   } catch (error) {
-    console.error("GODSLEAD BUYER INTENT ERROR:", error);
+    console.error("GODSLEAD API ERROR:", error);
 
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error
-          ? error.message
-          : "Buyer Intent search failed.",
-        signals: []
+        error: "Buyer discovery could not be completed.",
+        signals: [],
       },
       { status: 500 }
     );
