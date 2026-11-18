@@ -4,8 +4,7 @@ import { resolveMx } from "node:dns/promises";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const VERSION = "8.0.0";
-
+const VERSION = "8.1.0";
 const API_URL =
   "https://www.freelancer.com/api/projects/0.1/projects/active/";
 
@@ -134,39 +133,21 @@ type Project = {
   seo_url?: string;
   time_submitted?: number | string;
   owner_id?: number | string;
-
   owner_info?: RecordObject;
   user_details?: RecordObject;
   owner?: RecordObject;
   user?: RecordObject;
-
   budget?: {
     minimum?: number | string;
     maximum?: number | string;
     currency_id?: number | string;
   };
-
   location?: {
     country?: {
       code?: string;
       name?: string;
     };
   };
-};
-
-type DiscoveredContact = {
-  email: string | null;
-  emailStatus: string;
-  emailDomainMx: boolean | null;
-
-  phone: string | null;
-  phoneStatus: string;
-
-  website: string | null;
-  contactPage: string | null;
-
-  sourceUrl: string | null;
-  discoveredAt: string;
 };
 
 function textValue(value: unknown): string {
@@ -219,9 +200,7 @@ function extractProjects(data: unknown): Project[] {
   const seen = new Set<string>();
 
   function visit(value: unknown, depth: number): void {
-    if (depth > 8 || value === null || value === undefined) {
-      return;
-    }
+    if (depth > 8 || value == null) return;
 
     if (Array.isArray(value)) {
       for (const item of value) visit(item, depth + 1);
@@ -285,11 +264,25 @@ function getProjectUrl(project: Project): string {
     slug.startsWith("https://") ||
     slug.startsWith("http://")
   ) {
-    return slug;
+    try {
+      const url = new URL(slug);
+
+      if (
+        url.hostname === "www.freelancer.com" ||
+        url.hostname === "freelancer.com"
+      ) {
+        return url.toString();
+      }
+    } catch {
+      // Use the fallback URL.
+    }
   }
 
   if (slug) {
-    return "https://www.freelancer.com/projects/" + slug;
+    return (
+      "https://www.freelancer.com/projects/" +
+      encodeURIComponent(slug)
+    );
   }
 
   if (project.id !== undefined) {
@@ -367,63 +360,6 @@ function isRelevantProject(
   return !excludedTerms.some(term => title.includes(term));
 }
 
-function extractUrls(value: string): string[] {
-  const matches = value.match(/https?:\/\/[^\s<>"']+/gi) || [];
-
-  return Array.from(
-    new Set(
-      matches.map(url =>
-        url.replace(/[),.;!?]+$/, "")
-      )
-    )
-  ).slice(0, 10);
-}
-
-function isPublicWebsiteUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-
-    if (!["http:", "https:"].includes(url.protocol)) {
-      return false;
-    }
-
-    const hostname = url.hostname.toLowerCase();
-
-    if (
-      hostname === "localhost" ||
-      hostname.endsWith(".localhost") ||
-      hostname.endsWith(".local") ||
-      hostname === "127.0.0.1" ||
-      hostname === "::1" ||
-      hostname.startsWith("10.") ||
-      hostname.startsWith("192.168.") ||
-      hostname.startsWith("169.254.") ||
-      hostname.startsWith("172.16.") ||
-      hostname.startsWith("172.17.") ||
-      hostname.startsWith("172.18.") ||
-      hostname.startsWith("172.19.") ||
-      hostname.startsWith("172.20.") ||
-      hostname.startsWith("172.21.") ||
-      hostname.startsWith("172.22.") ||
-      hostname.startsWith("172.23.") ||
-      hostname.startsWith("172.24.") ||
-      hostname.startsWith("172.25.") ||
-      hostname.startsWith("172.26.") ||
-      hostname.startsWith("172.27.") ||
-      hostname.startsWith("172.28.") ||
-      hostname.startsWith("172.29.") ||
-      hostname.startsWith("172.30.") ||
-      hostname.startsWith("172.31.")
-    ) {
-      return false;
-    }
-
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function extractEmails(value: string): string[] {
   const matches =
     value.match(
@@ -456,9 +392,7 @@ function extractEmails(value: string): string[] {
 
 function extractPhones(value: string): string[] {
   const matches =
-    value.match(
-      /(?:\+?\d[\d\s().-]{7,}\d)/g
-    ) || [];
+    value.match(/(?:\+?\d[\d\s().-]{7,}\d)/g) || [];
 
   return Array.from(
     new Set(
@@ -472,16 +406,69 @@ function extractPhones(value: string): string[] {
   ).slice(0, 10);
 }
 
-async function checkEmailDomain(
-  email: string
-): Promise<{
+function isFreelancerUrl(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+
+    return (
+      hostname === "freelancer.com" ||
+      hostname.endsWith(".freelancer.com")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function extractCompanyWebsite(value: string): string | null {
+  const matches =
+    value.match(/https?:\/\/[^\s<>"']+/gi) || [];
+
+  for (const match of matches) {
+    const cleaned = match.replace(/[),.;!?]+$/, "");
+
+    try {
+      const url = new URL(cleaned);
+
+      if (
+        !["http:", "https:"].includes(url.protocol) ||
+        isFreelancerUrl(cleaned)
+      ) {
+        continue;
+      }
+
+      if (
+        url.hostname === "localhost" ||
+        url.hostname.endsWith(".localhost") ||
+        url.hostname.endsWith(".local") ||
+        url.hostname === "127.0.0.1" ||
+        url.hostname === "::1" ||
+        url.hostname.startsWith("10.") ||
+        url.hostname.startsWith("192.168.") ||
+        url.hostname.startsWith("169.254.")
+      ) {
+        continue;
+      }
+
+      return url.origin;
+    } catch {
+      // Ignore malformed URLs.
+    }
+  }
+
+  return null;
+}
+
+async function checkEmailDomain(email: string): Promise<{
   status: string;
   mx: boolean | null;
 }> {
   const domain = email.split("@")[1];
 
   if (!domain) {
-    return { status: "INVALID_FORMAT", mx: false };
+    return {
+      status: "INVALID_FORMAT",
+      mx: false,
+    };
   }
 
   try {
@@ -506,217 +493,59 @@ async function checkEmailDomain(
   }
 }
 
-async function fetchPublicPage(
-  url: string
-): Promise<string | null> {
-  if (!isPublicWebsiteUrl(url)) return null;
-
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        "User-Agent": "GODSLEAD-ContactDiscovery/1.0",
-        Accept: "text/html,application/xhtml+xml",
-      },
-      redirect: "manual",
-      cache: "no-store",
-      signal: AbortSignal.timeout(7000),
-    });
-
-    if (!response.ok) return null;
-
-    const contentType =
-      response.headers.get("content-type") || "";
-
-    if (!contentType.includes("text/html")) {
-      return null;
-    }
-
-    const html = await response.text();
-
-    return html.slice(0, 500000);
-  } catch {
-    return null;
-  }
-}
-
-function findContactPage(
-  html: string,
-  baseUrl: string
-): string | null {
-  const links =
-    html.match(/href=["'][^"']+["']/gi) || [];
-
-  const candidates = links
-    .map(link => link.replace(/^href=["']|["']$/gi, ""))
-    .filter(link =>
-      /contact|about|support|get-in-touch|company/i.test(link)
-    );
-
-  for (const candidate of candidates) {
-    try {
-      const url = new URL(candidate, baseUrl);
-
-      if (
-        url.origin === new URL(baseUrl).origin &&
-        isPublicWebsiteUrl(url.toString())
-      ) {
-        return url.toString();
-      }
-    } catch {
-      // Ignore invalid links.
-    }
-  }
-
-  return null;
-}
-
-async function discoverContacts(
-  project: Project
-): Promise<DiscoveredContact> {
-  const description =
-    textValue(project.description) ||
-    textValue(project.preview_description);
-
+function getBuyerInformation(project: Project) {
   const owner = getOwner(project);
 
-  const ownerWebsite = firstText(owner, [
+  const name = firstText(owner, [
+    "display_name",
+    "displayName",
+    "name",
+    "full_name",
+    "fullName",
+  ]);
+
+  const companyName = firstText(owner, [
+    "company_name",
+    "companyName",
+    "business_name",
+    "businessName",
+  ]);
+
+  const companyWebsiteRaw = firstText(owner, [
     "company_website",
     "companyWebsite",
     "website",
     "website_url",
   ]);
 
-  const descriptionUrls = extractUrls(description);
+  const companyWebsite =
+    companyWebsiteRaw &&
+    !isFreelancerUrl(companyWebsiteRaw) &&
+    extractCompanyWebsite(companyWebsiteRaw)
+      ? extractCompanyWebsite(companyWebsiteRaw)
+      : null;
 
-  const candidateUrls = [
-    ...(ownerWebsite ? [ownerWebsite] : []),
-    ...descriptionUrls,
-  ];
+  const ownerId =
+    project.owner_id !== undefined &&
+    String(project.owner_id) !== "null" &&
+    String(project.owner_id) !== "0"
+      ? String(project.owner_id)
+      : null;
 
-  const website = candidateUrls.find(isPublicWebsiteUrl) || null;
+  const username = firstText(owner, [
+    "username",
+    "user_name",
+    "userName",
+  ]);
 
-  const result: DiscoveredContact = {
-    email: null,
-    emailStatus: "NOT_FOUND",
-    emailDomainMx: null,
-
-    phone: null,
-    phoneStatus: "NOT_FOUND",
-
-    website,
-    contactPage: null,
-
-    sourceUrl: null,
-    discoveredAt: new Date().toISOString(),
-  };
-
-  const directEmails = extractEmails(description);
-  const directPhones = extractPhones(description);
-
-  if (directEmails.length > 0) {
-    result.email = directEmails[0];
-    result.sourceUrl = getProjectUrl(project);
-  }
-
-  if (directPhones.length > 0) {
-    result.phone = directPhones[0];
-    result.phoneStatus = "FORMAT_VALID_NOT_CALL_VERIFIED";
-    result.sourceUrl = getProjectUrl(project);
-  }
-
-  if (result.email) {
-    const emailCheck = await checkEmailDomain(result.email);
-    result.emailStatus = emailCheck.status;
-    result.emailDomainMx = emailCheck.mx;
-  }
-
-  if (!website) return result;
-
-  const html = await fetchPublicPage(website);
-
-  if (!html) return result;
-
-  const pageEmails = extractEmails(html);
-  const pagePhones = extractPhones(html);
-
-  if (!result.email && pageEmails.length > 0) {
-    result.email = pageEmails[0];
-    result.sourceUrl = website;
-
-    const emailCheck = await checkEmailDomain(result.email);
-    result.emailStatus = emailCheck.status;
-    result.emailDomainMx = emailCheck.mx;
-  }
-
-  if (!result.phone && pagePhones.length > 0) {
-    result.phone = pagePhones[0];
-    result.phoneStatus = "FORMAT_VALID_NOT_CALL_VERIFIED";
-    result.sourceUrl = website;
-  }
-
-  result.contactPage = findContactPage(html, website);
-
-  if (result.contactPage && (!result.email || !result.phone)) {
-    const contactHtml = await fetchPublicPage(
-      result.contactPage
-    );
-
-    if (contactHtml) {
-      if (!result.email) {
-        const emails = extractEmails(contactHtml);
-
-        if (emails.length > 0) {
-          result.email = emails[0];
-          result.sourceUrl = result.contactPage;
-
-          const emailCheck = await checkEmailDomain(
-            result.email
-          );
-
-          result.emailStatus = emailCheck.status;
-          result.emailDomainMx = emailCheck.mx;
-        }
-      }
-
-      if (!result.phone) {
-        const phones = extractPhones(contactHtml);
-
-        if (phones.length > 0) {
-          result.phone = phones[0];
-          result.phoneStatus =
-            "FORMAT_VALID_NOT_CALL_VERIFIED";
-          result.sourceUrl = result.contactPage;
-        }
-      }
-    }
-  }
-
-  return result;
-}
-
-function getBuyerInformation(project: Project) {
-  const owner = getOwner(project);
+  const companyIdentified = Boolean(
+    companyName && companyWebsite
+  );
 
   return {
-    ownerId:
-      project.owner_id !== undefined
-        ? String(project.owner_id)
-        : null,
-
-    name: firstText(owner, [
-      "display_name",
-      "displayName",
-      "name",
-      "full_name",
-      "fullName",
-    ]),
-
-    username: firstText(owner, [
-      "username",
-      "user_name",
-      "userName",
-    ]),
+    ownerId,
+    name,
+    username,
 
     profileUrl: firstText(owner, [
       "profile_url",
@@ -724,19 +553,65 @@ function getBuyerInformation(project: Project) {
       "public_profile_url",
     ]),
 
-    companyName: firstText(owner, [
-      "company_name",
-      "companyName",
-      "business_name",
-      "businessName",
-    ]),
+    companyName,
+    companyWebsite,
 
-    companyWebsite: firstText(owner, [
-      "company_website",
-      "companyWebsite",
-      "website",
-      "website_url",
-    ]),
+    identificationStatus: companyIdentified
+      ? "COMPANY_DETAILS_RETURNED_NOT_INDEPENDENTLY_VERIFIED"
+      : "COMPANY_NOT_IDENTIFIED",
+  };
+}
+
+async function discoverContacts(project: Project) {
+  const description =
+    textValue(project.description) ||
+    textValue(project.preview_description);
+
+  const emails = extractEmails(description);
+  const phones = extractPhones(description);
+  const buyer = getBuyerInformation(project);
+
+  const email = emails[0] || null;
+  const phone = phones[0] || null;
+
+  let emailStatus = "NOT_FOUND";
+  let emailDomainMx: boolean | null = null;
+
+  if (email) {
+    const result = await checkEmailDomain(email);
+    emailStatus = result.status;
+    emailDomainMx = result.mx;
+  }
+
+  return {
+    email,
+    emailStatus,
+    emailDomainMx,
+
+    emailVerificationStatus: email
+      ? "SYNTAX_CHECKED_DOMAIN_CHECKED_MAILBOX_NOT_CONFIRMED"
+      : "NO_EMAIL_FOUND",
+
+    phone,
+    phoneStatus: phone
+      ? "FORMAT_VALID_NOT_CALL_VERIFIED"
+      : "NOT_FOUND",
+
+    website: buyer.companyWebsite,
+
+    contactPage: null,
+
+    sourceUrl:
+      email || phone
+        ? getProjectUrl(project)
+        : null,
+
+    discoveryMethod:
+      email || phone
+        ? "PROJECT_DESCRIPTION"
+        : "NO_PUBLIC_CONTACT_DETAILS_RETURNED",
+
+    discoveredAt: new Date().toISOString(),
   };
 }
 
@@ -771,7 +646,7 @@ async function createSignal(
     organisation:
       buyer.companyName ||
       buyer.name ||
-      "Freelancer project owner (organisation not independently verified)",
+      "Organisation not identified",
 
     buyer: {
       ...buyer,
@@ -800,6 +675,7 @@ async function createSignal(
     ],
 
     confidence,
+
     status: "POTENTIAL_BUYER",
 
     budget: {
@@ -808,6 +684,8 @@ async function createSignal(
       currencyId: project.budget?.currency_id ?? null,
       currencyVerified: false,
       meetsMinimumBudget: false,
+      qualificationStatus:
+        "CURRENCY_NOT_VERIFIED_BUDGET_NOT_QUALIFIED",
     },
   };
 }
@@ -857,7 +735,9 @@ async function searchFreelancer(
 
     const data: unknown = await response.json();
 
-    return { projects: extractProjects(data) };
+    return {
+      projects: extractProjects(data),
+    };
   } catch (error) {
     return {
       projects: [],
@@ -900,15 +780,13 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const minConfidence = Math.max(
-    0,
-    Math.min(
-      100,
-      Number(
-        request.nextUrl.searchParams.get("minConfidence") || 0
-      )
-    )
+  const requestedConfidence = Number(
+    request.nextUrl.searchParams.get("minConfidence") || 0
   );
+
+  const minConfidence = Number.isFinite(requestedConfidence)
+    ? Math.max(0, Math.min(100, requestedConfidence))
+    : 0;
 
   const allProjects: Project[] = [];
   const errors: string[] = [];
@@ -951,10 +829,19 @@ export async function GET(request: NextRequest) {
     countryMismatch: 0,
     matchingServiceProjects: 0,
     rejectedProjects: 0,
+
+    companiesIdentified: 0,
+    companiesNotIdentified: 0,
+
     contactsWithEmail: 0,
     contactsWithPhone: 0,
     contactsWithBoth: 0,
     contactsWithoutDetails: 0,
+
+    emailDomainsWithMx: 0,
+    emailMailboxesConfirmed: 0,
+    phoneNumbersCallVerified: 0,
+
     countryFilterUsed: countryCode.toLowerCase(),
     errors,
   };
@@ -989,6 +876,12 @@ export async function GET(request: NextRequest) {
 
     if (signal.confidence < minConfidence) continue;
 
+    if (signal.buyer.companyName) {
+      diagnostics.companiesIdentified++;
+    } else {
+      diagnostics.companiesNotIdentified++;
+    }
+
     if (signal.contact.email) {
       diagnostics.contactsWithEmail++;
     }
@@ -1011,6 +904,10 @@ export async function GET(request: NextRequest) {
       diagnostics.contactsWithoutDetails++;
     }
 
+    if (signal.contact.emailDomainMx === true) {
+      diagnostics.emailDomainsWithMx++;
+    }
+
     signals.push(signal);
   }
 
@@ -1022,7 +919,20 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     success: true,
     version: VERSION,
-    source: "Freelancer API with public contact discovery",
+
+    source: "Freelancer API with conservative contact extraction",
+
+    capabilities: {
+      freelancerProjectSearch: true,
+      companyDiscovery: false,
+      independentCompanyVerification: false,
+      publicWebsiteCrawling: false,
+      emailSyntaxExtraction: true,
+      emailDomainMxCheck: true,
+      mailboxVerification: false,
+      phoneFormatExtraction: true,
+      phoneCallVerification: false,
+    },
 
     country: {
       code: countryCode,
@@ -1033,15 +943,29 @@ export async function GET(request: NextRequest) {
 
     summary: {
       totalSignals: signals.length,
+
       verifiedBuyers: 0,
+
       potentialBuyers: signals.length,
+
       rejectedBuyers: diagnostics.rejectedProjects,
+
+      companiesIdentified: diagnostics.companiesIdentified,
+      companiesNotIdentified: diagnostics.companiesNotIdentified,
+
       contactsWithEmail: diagnostics.contactsWithEmail,
       contactsWithPhone: diagnostics.contactsWithPhone,
       contactsWithBoth: diagnostics.contactsWithBoth,
       contactsWithoutDetails: diagnostics.contactsWithoutDetails,
+
+      emailDomainsWithMx: diagnostics.emailDomainsWithMx,
+
+      emailMailboxesConfirmed: 0,
+      phoneNumbersCallVerified: 0,
     },
 
-    data: { signals },
+    data: {
+      signals,
+    },
   });
 }
