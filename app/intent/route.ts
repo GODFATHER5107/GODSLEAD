@@ -1,328 +1,372 @@
-import { NextRequest, NextResponse } from "next/server";
-
-export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const dynamic = "force-dynamic";
 
-const MINIMUM_BUDGET_USD = 5000;
+import { NextResponse } from "next/server";
 
-const MARKETS = [
-  { name: "United States", code: "US", aliases: ["united states", "usa"] },
-  { name: "Canada", code: "CA", aliases: ["canada"] },
-  { name: "United Kingdom", code: "GB", aliases: ["united kingdom", "uk"] },
-  { name: "Ireland", code: "IE", aliases: ["ireland"] },
-  { name: "Malta", code: "MT", aliases: ["malta"] },
-  { name: "Australia", code: "AU", aliases: ["australia"] },
-  { name: "New Zealand", code: "NZ", aliases: ["new zealand"] },
-  { name: "Fiji", code: "FJ", aliases: ["fiji"] },
-  { name: "Papua New Guinea", code: "PG", aliases: ["papua new guinea"] },
-  { name: "United Arab Emirates", code: "AE", aliases: ["uae", "dubai"] },
-  { name: "India", code: "IN", aliases: ["india"] },
-  { name: "Singapore", code: "SG", aliases: ["singapore"] },
-  { name: "Philippines", code: "PH", aliases: ["philippines"] },
-  { name: "Malaysia", code: "MY", aliases: ["malaysia"] },
-  { name: "Jamaica", code: "JM", aliases: ["jamaica"] },
-  { name: "Trinidad and Tobago", code: "TT", aliases: ["trinidad and tobago"] },
-  { name: "Barbados", code: "BB", aliases: ["barbados"] },
-  { name: "Bahamas", code: "BS", aliases: ["bahamas"] },
-  { name: "Belize", code: "BZ", aliases: ["belize"] },
-  { name: "Guyana", code: "GY", aliases: ["guyana"] },
-] as const;
+const API_URL =
+  "https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts";
 
-const SEARCH_TERMS = [
-  '"looking to hire" "software developer"',
-  '"looking for a software development agency"',
-  '"need a development agency"',
-  '"seeking a software development company"',
-  '"looking for an MVP development partner"',
-  '"need an MVP development team"',
-  '"looking to hire" "app developers"',
-  '"seeking mobile app development company"',
-  '"need a company to build" software',
-  '"looking for an AI development agency"',
-  '"looking for outsourced software development"',
-  '"requesting proposals" software development',
+const APPROVED_COUNTRIES = [
+  "United States",
+  "Canada",
+  "United Kingdom",
+  "Ireland",
+  "Malta",
+  "Australia",
+  "New Zealand",
+  "Fiji",
+  "Papua New Guinea",
+  "United Arab Emirates",
+  "India",
+  "Singapore",
+  "Philippines",
+  "Malaysia",
+  "Jamaica",
+  "Trinidad and Tobago",
+  "Barbados",
+  "Bahamas",
+  "Belize",
+  "Guyana",
 ];
 
-const BUYING_PHRASES = [
-  "looking to hire",
-  "looking for a software development agency",
-  "need a development agency",
-  "seeking a software development company",
-  "looking for an mvp development partner",
-  "need an mvp development team",
-  "looking to hire",
-  "seeking mobile app development company",
-  "need a company to build",
-  "looking for an ai development agency",
-  "looking for outsourced software development",
-  "requesting proposals",
-  "seeking developers for our project",
-  "looking for a development partner",
-];
-
-const EXCLUDED_PHRASES = [
-  "looking for a job",
-  "seeking employment",
-  "job seeker",
-  "resume",
-  "cv ",
-  "my portfolio",
-  "learn programming",
-  "tutorial",
-  "how to code",
-  "programming discussion",
-  "open source project",
-  "technical interview",
-  "salary",
-  "internship",
-  "hiring software engineer",
-  "we are hiring developers",
-];
-
-type Signal = {
-  id: string;
-  title: string;
-  organisation: string | null;
-  source: string;
-  sourceUrl: string;
-  publishedAt: string | null;
-  country: string;
-  countryCode: string;
-  locationVerified: boolean;
-  intentType: string;
-  evidence: string;
-  matchedTerms: string[];
-  confidence: number;
-  budget: number | null;
-  budgetCurrency: string | null;
-  budgetStatus: string;
-  buyerStatus: string;
+const COUNTRY_PATTERNS: Record<string, RegExp> = {
+  "United States": /\b(USA|United States|United States of America|US-based)\b/i,
+  Canada: /\bCanada\b/i,
+  "United Kingdom": /\b(United Kingdom|UK|Britain|England|Scotland|Wales)\b/i,
+  Ireland: /\bIreland\b/i,
+  Malta: /\bMalta\b/i,
+  Australia: /\bAustralia\b/i,
+  "New Zealand": /\bNew Zealand\b/i,
+  Fiji: /\bFiji\b/i,
+  "Papua New Guinea": /\bPapua New Guinea\b/i,
+  "United Arab Emirates": /\b(UAE|United Arab Emirates|Dubai|Abu Dhabi)\b/i,
+  India: /\bIndia\b/i,
+  Singapore: /\bSingapore\b/i,
+  Philippines: /\bPhilippines\b/i,
+  Malaysia: /\bMalaysia\b/i,
+  Jamaica: /\bJamaica\b/i,
+  "Trinidad and Tobago": /\b(Trinidad and Tobago|Trinidad)\b/i,
+  Barbados: /\bBarbados\b/i,
+  Bahamas: /\b(Bahamas|The Bahamas)\b/i,
+  Belize: /\bBelize\b/i,
+  Guyana: /\bGuyana\b/i,
 };
 
-function cleanText(value: string): string {
-  return value
-    .replace(/<[^>]*>/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\s+/g, " ")
-    .trim();
-}
+const EXCLUDED_COUNTRIES =
+  /\b(Pakistan|Bangladesh|Sri Lanka|Nigeria|Kenya|South Africa|Ghana|Egypt|Ethiopia|Tanzania|Uganda|Morocco|Algeria|Tunisia|Zimbabwe|Rwanda|Senegal|Cameroon|Zambia|Botswana|Namibia|Angola|Sudan|Libya)\b/i;
+
+const SEARCH_QUERIES = [
+  '"looking for a software developer"',
+  '"looking for an app developer"',
+  '"need a development team"',
+  '"looking for a development agency"',
+  '"need an MVP developer"',
+  '"looking for a web development company"',
+  '"need an AI development company"',
+  '"looking for a software development company"',
+];
+
+const BUYING_INTENT =
+  /\b(looking for|seeking|need|we need|want to hire|searching for|recommend a|can anyone recommend|hiring a|hire an|find a|looking to engage|looking to outsource|requesting proposals|seeking proposals|need help finding)\b/i;
+
+const SERVICE_INTENT =
+  /\b(software development|software developer|software company|development company|development agency|development team|web developer|web development|website development|mobile app|app developer|app development|android app|ios app|MVP development|MVP developer|product development|AI development|AI developer|machine learning development|automation development|blockchain development|blockchain developer|IT outsourcing|dedicated development team|custom application|custom software|SaaS development)\b/i;
+
+const EXCLUDED_INTENT =
+  /\b(looking for a job|seeking employment|open to work|my resume|my portfolio|hire me|available for work|freelance jobs|job vacancy|job opening|salary|internship|tutorial|course|homework|student project|open source contribution|free volunteer|unpaid work|crypto giveaway)\b/i;
 
 function identifyCountry(text: string) {
-  const lower = text.toLowerCase();
-
-  for (const market of MARKETS) {
-    if (market.aliases.some(alias => lower.includes(alias))) {
-      return market;
-    }
+  if (EXCLUDED_COUNTRIES.test(text)) {
+    return {
+      country: "EXCLUDED",
+      approved: false,
+    };
   }
 
-  return null;
+  const matches = APPROVED_COUNTRIES.filter((country) =>
+    COUNTRY_PATTERNS[country].test(text)
+  );
+
+  if (matches.length !== 1) {
+    return {
+      country: "UNKNOWN",
+      approved: false,
+    };
+  }
+
+  return {
+    country: matches[0],
+    approved: true,
+  };
 }
 
 function extractBudget(text: string) {
   const patterns = [
-    /(?:USD|US\$|\$)\s?([\d,]+(?:\.\d+)?)\s?(k)?/i,
-    /([\d,]+(?:\.\d+)?)\s?(k)?\s?(?:USD|US dollars)/i,
+    /(?:budget|budgeted|spend|spending|cost|project value|investment|price)[^.\n]{0,50}?\$\s?([\d,]+(?:\.\d+)?)\s?(k|m)?\b/i,
+    /\$\s?([\d,]+(?:\.\d+)?)\s?(k|m)?\b/i,
+    /\bUSD\s?([\d,]+(?:\.\d+)?)\s?(k|m)?\b/i,
   ];
 
   for (const pattern of patterns) {
     const match = text.match(pattern);
 
-    if (!match) continue;
+    if (match) {
+      let amount = Number(match[1].replace(/,/g, ""));
 
-    let amount = Number(match[1].replace(/,/g, ""));
+      if (match[2]?.toLowerCase() === "k") amount *= 1000;
+      if (match[2]?.toLowerCase() === "m") amount *= 1000000;
 
-    if (match[2]?.toLowerCase() === "k") {
-      amount *= 1000;
-    }
-
-    if (Number.isFinite(amount)) {
-      return { amount, currency: "USD" };
+      return {
+        amount,
+        currency: "USD",
+        meetsMinimum: amount >= 5000,
+        status: "EXPLICITLY_STATED",
+      };
     }
   }
 
-  return { amount: null, currency: null };
+  return {
+    amount: null,
+    currency: null,
+    meetsMinimum: false,
+    status: "UNKNOWN",
+  };
 }
 
-function classifyRequirement(text: string) {
-  const lower = text.toLowerCase();
+function getPostUrl(uri: string, handle: string) {
+  const postId = uri.split("/").pop();
 
-  if (EXCLUDED_PHRASES.some(term => lower.includes(term))) {
-    return null;
-  }
-
-  const matched = BUYING_PHRASES.filter(term =>
-    lower.includes(term)
-  );
-
-  if (matched.length === 0) {
-    return null;
-  }
-
-  let type = "SOFTWARE_DEVELOPMENT";
-
-  if (/mvp|startup product/.test(lower)) {
-    type = "MVP_DEVELOPMENT";
-  } else if (/mobile app|ios app|android app/.test(lower)) {
-    type = "MOBILE_APP";
-  } else if (/artificial intelligence|ai development/.test(lower)) {
-    type = "AI_DEVELOPMENT";
-  } else if (/website|web application/.test(lower)) {
-    type = "WEB_DEVELOPMENT";
-  }
-
-  return { type, matched };
+  return `https://bsky.app/profile/${handle}/post/${postId}`;
 }
 
-async function searchHackerNews(term: string): Promise<Signal[]> {
-  const url = new URL("https://hn.algolia.com/api/v1/search");
+function analysePost(post: any) {
+  const text = post.record?.text || post.text || "";
+  const author = post.author || {};
+  const handle = author.handle || "unknown";
+  const uri = post.uri || "";
 
-  url.searchParams.set("query", term);
-  url.searchParams.set("tags", "story");
-  url.searchParams.set("hitsPerPage", "30");
+  if (!text || !uri) return null;
 
-  const sixMonthsAgo =
-    Math.floor(Date.now() / 1000) - 180 * 24 * 60 * 60;
+  if (EXCLUDED_INTENT.test(text)) return null;
 
-  url.searchParams.set(
-    "numericFilters",
-    `created_at_i>${sixMonthsAgo}`
-  );
+  if (!BUYING_INTENT.test(text)) return null;
 
+  if (!SERVICE_INTENT.test(text)) return null;
+
+  const location = identifyCountry(text);
+
+  const budget = extractBudget(text);
+
+  const date =
+    post.record?.createdAt ||
+    post.indexedAt ||
+    null;
+
+  return {
+    id: uri,
+    source: "Bluesky",
+    author: {
+      handle,
+      displayName: author.displayName || handle,
+      profileUrl: `https://bsky.app/profile/${handle}`,
+    },
+    requirement: text,
+    country: location.country,
+    approvedMarket: location.approved,
+    buyerClassification: "POTENTIAL_BUYER",
+    qualificationStatus: location.approved
+      ? "APPROVED_MARKET_POTENTIAL"
+      : "UNQUALIFIED_LOCATION",
+    budget,
+    decisionMakerStatus: "NOT_VERIFIED",
+    organisationStatus: "NOT_VERIFIED",
+    contactStatus: "PUBLIC_PROFILE_ONLY",
+    publishedAt: date,
+    postUrl: getPostUrl(uri, handle),
+    verificationNotes: [
+      "Public buying-intent language detected.",
+      "Organisation identity has not been independently verified.",
+      "Decision-maker status has not been independently verified.",
+      budget.status === "UNKNOWN"
+        ? "Budget has not been explicitly stated."
+        : "Budget extracted from public post text.",
+      location.approved
+        ? "An approved country was explicitly identified in the post."
+        : "Approved country has not been established.",
+    ],
+  };
+}
+
+export async function GET(request: Request) {
   try {
-    const response = await fetch(url.toString(), {
-      headers: { Accept: "application/json" },
-      cache: "no-store",
-      signal: AbortSignal.timeout(15000),
-    });
+    const { searchParams } = new URL(request.url);
 
-    if (!response.ok) return [];
+    const requestedCountry = searchParams.get("country");
+    const requestedLimit = Number(searchParams.get("limit") || 50);
 
-    const data = await response.json();
-    const signals: Signal[] = [];
+    const limit = Math.min(
+      Math.max(Number.isFinite(requestedLimit) ? requestedLimit : 50, 1),
+      100
+    );
 
-    for (const hit of data.hits || []) {
-      const title = cleanText(hit.title || "");
-      const description = cleanText(hit.story_text || "");
-      const combined = `${title} ${description}`;
-
-      const requirement = classifyRequirement(combined);
-
-      if (!requirement || !hit.objectID) continue;
-
-      const country = identifyCountry(combined);
-      const budget = extractBudget(combined);
-
-      if (
-        budget.amount !== null &&
-        budget.amount < MINIMUM_BUDGET_USD
-      ) {
-        continue;
-      }
-
-      signals.push({
-        id: `HN-${hit.objectID}`,
-        title,
-        organisation: null,
-        source: "Hacker News",
-        sourceUrl: `https://news.ycombinator.com/item?id=${hit.objectID}`,
-        publishedAt: hit.created_at
-          ? new Date(hit.created_at).toISOString()
-          : null,
-        country: country?.name || "Location not identified",
-        countryCode: country?.code || "UNKNOWN",
-        locationVerified: Boolean(country),
-        intentType: requirement.type,
-        evidence: combined.slice(0, 1000),
-        matchedTerms: requirement.matched,
-        confidence: 60,
-        budget: budget.amount,
-        budgetCurrency: budget.currency,
-        budgetStatus: budget.amount === null ? "UNKNOWN" : "STATED",
-        buyerStatus: "POTENTIAL_BUYER",
-      });
-    }
-
-    return signals;
-  } catch (error) {
-    console.error("Hacker News search error:", error);
-    return [];
-  }
-}
-
-export async function GET(request: NextRequest) {
-  try {
-    const params = request.nextUrl.searchParams;
-    const requestedCountry = params.get("country")?.toUpperCase();
-    const requestedType = params.get("type")?.toUpperCase();
-
-    const allowedMarket = requestedCountry
-      ? MARKETS.find(market => market.code === requestedCountry)
-      : null;
-
-    if (requestedCountry && !allowedMarket) {
+    if (
+      requestedCountry &&
+      requestedCountry !== "ALL" &&
+      !APPROVED_COUNTRIES.includes(requestedCountry)
+    ) {
       return NextResponse.json(
-        { success: false, error: "Country not permitted.", signals: [] },
-        { status: 403 }
+        {
+          success: false,
+          error: "Country is not in the approved market list.",
+          approvedCountries: APPROVED_COUNTRIES,
+        },
+        { status: 400 }
       );
     }
 
-    const results = await Promise.all(
-      SEARCH_TERMS.map(searchHackerNews)
-    );
+    const collected = new Map<string, any>();
 
-    const unique = new Map<string, Signal>();
+    const errors: string[] = [];
 
-    for (const signal of results.flat()) {
-      if (
-        requestedCountry &&
-        signal.locationVerified &&
-        signal.countryCode !== requestedCountry
-      ) {
-        continue;
-      }
+    for (const query of SEARCH_QUERIES) {
+      const params = new URLSearchParams({
+        q: query,
+        limit: "100",
+        sort: "latest",
+      });
 
-      if (requestedType && signal.intentType !== requestedType) {
-        continue;
-      }
+      const endpoint = `${API_URL}?${params.toString()}`;
 
-      if (!unique.has(signal.id)) {
-        unique.set(signal.id, signal);
+      try {
+        const response = await fetch(endpoint, {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+            "User-Agent": "GODSLEAD/1.0",
+          },
+          cache: "no-store",
+          signal: AbortSignal.timeout(15000),
+        });
+
+        if (!response.ok) {
+          errors.push(
+            `Bluesky returned HTTP ${response.status} for query: ${query}`
+          );
+          continue;
+        }
+
+        const data = await response.json();
+
+        for (const post of data.posts || []) {
+          const lead = analysePost(post);
+
+          if (lead) {
+            collected.set(lead.id, lead);
+          }
+        }
+      } catch (error) {
+        errors.push(
+          `Search failed for "${query}": ${
+            error instanceof Error ? error.message : "Unknown error"
+          }`
+        );
       }
     }
 
-    const signals = [...unique.values()].sort(
-      (a, b) =>
+    const allSignals = Array.from(collected.values());
+
+    const approvedMarketLeads = allSignals.filter(
+      (lead) => lead.approvedMarket
+    );
+
+    const unknownLocationLeads = allSignals.filter(
+      (lead) => !lead.approvedMarket
+    );
+
+    const filteredLeads =
+      requestedCountry && requestedCountry !== "ALL"
+        ? approvedMarketLeads.filter(
+            (lead) => lead.country === requestedCountry
+          )
+        : approvedMarketLeads;
+
+    filteredLeads.sort((a, b) => {
+      return (
         new Date(b.publishedAt || 0).getTime() -
         new Date(a.publishedAt || 0).getTime()
-    );
+      );
+    });
+
+    const results = filteredLeads.slice(0, limit);
+
+    const budgetConfirmed = results.filter(
+      (lead) => lead.budget.meetsMinimum
+    ).length;
+
+    const budgetUnknown = results.filter(
+      (lead) => lead.budget.status === "UNKNOWN"
+    ).length;
 
     return NextResponse.json({
       success: true,
-      product: "GODSLEAD",
-      engine: "EXPLICIT BUYING INTENT",
-      version: "4.0.0",
-      source: "Hacker News Public API",
-      totalSignals: signals.length,
-      minimumBudgetUSD: MINIMUM_BUDGET_USD,
-      requestedCountry: requestedCountry || "ALL APPROVED MARKETS",
-      signals,
-      note:
-        "Only explicit hiring or agency-seeking phrases are considered. Results remain preliminary until the buyer, requirement, geography and budget are independently verified.",
+      platform: "GODSLEAD",
+      engine: "BLUESKY INTERNATIONAL BUYER DISCOVERY",
+      version: "1.0.0",
+      source: "Bluesky Public Search API",
+      sourceWebsite: "https://bsky.app/",
+      generatedAt: new Date().toISOString(),
+
+      configuration: {
+        minimumBudgetUSD: 5000,
+        approvedCountries: APPROVED_COUNTRIES,
+        excludedCountries:
+          "All African countries, Pakistan, Bangladesh and Sri Lanka",
+        searchQueries: SEARCH_QUERIES,
+        resultLimit: limit,
+      },
+
+      summary: {
+        totalSignals: results.length,
+        approvedMarketSignals: approvedMarketLeads.length,
+        unknownLocationSignals: unknownLocationLeads.length,
+        budgetConfirmedAtOrAbove5000: budgetConfirmed,
+        budgetUnknown,
+        verifiedBuyers: 0,
+        potentialBuyers: results.length,
+      },
+
+      qualificationRules: {
+        verifiedBuyer:
+          "Requires independent organisation verification and explicitly confirmed budget of at least USD 5,000. This API does not independently verify either requirement.",
+        potentialBuyer:
+          "Public buying intent and relevant software service language detected.",
+        unknownLocation:
+          "Not included in approved-market results.",
+        budget:
+          "Never assumed. Only explicitly stated amounts are extracted.",
+      },
+
+      leads: results,
+
+      diagnostics: {
+        queriesAttempted: SEARCH_QUERIES.length,
+        uniqueMatchingSignals: allSignals.length,
+        apiErrors: errors,
+      },
+
+      message:
+        "Public posts are discovery signals, not independently verified buyers. Human verification is required before outreach.",
     });
   } catch (error) {
-    console.error("GODSLEAD ERROR:", error);
-
     return NextResponse.json(
       {
         success: false,
-        error: "Buyer discovery failed.",
-        signals: [],
+        platform: "GODSLEAD",
+        engine: "BLUESKY INTERNATIONAL BUYER DISCOVERY",
+        error:
+          error instanceof Error
+            ? error.message
+            : "An unexpected server error occurred.",
       },
       { status: 500 }
     );
