@@ -124,19 +124,36 @@ export default function Home() {
         minConfidence: minimumConfidence,
       });
 
-      if (service) params.set("type", service);
-
-      // The current API file is in app/intent/route.ts.
-      const response = await fetch(`/intent?${params.toString()}`);
-
-      const data = await response.json();
-
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || "The search could not be completed.");
+      if (service) {
+        params.set("type", service);
       }
 
-      setSignals(data.signals || []);
+      const response = await fetch(`/intent?${params.toString()}`, {
+        cache: "no-store",
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(
+          result.error || "The search could not be completed."
+        );
+      }
+
+      // The API response contains signals inside result.data.signals.
+      // The fallback also supports the older result.signals structure.
+      const receivedSignals =
+        result?.data?.signals ?? result?.signals;
+
+      if (!Array.isArray(receivedSignals)) {
+        throw new Error(
+          "The API responded successfully, but its signals list was not found."
+        );
+      }
+
+      setSignals(receivedSignals);
       setSearched(true);
+
     } catch (err) {
       setError(
         err instanceof Error
