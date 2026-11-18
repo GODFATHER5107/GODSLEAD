@@ -1,13 +1,12 @@
-```typescript
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const VERSION = "7.3.0";
+
 const API_URL =
   "https://www.freelancer.com/api/projects/0.1/projects/active/";
-
-const VERSION = "7.2.0";
 
 const COUNTRIES: Record<string, string> = {
   US: "United States",
@@ -105,29 +104,22 @@ const ACTION_TERMS = [
   "development",
   "create",
   "creating",
-  "design",
   "redesign",
   "fix",
   "improve",
   "integrate",
-  "integration",
   "implement",
-  "implementation",
   "maintain",
   "upgrade",
   "migrate",
   "launch",
   "deploy",
   "program",
-  "programming",
-  "code",
   "coding",
-  "engineer",
   "engineering",
   "hire",
   "looking for",
   "need a developer",
-  "need an experienced",
   "seeking a developer",
 ];
 
@@ -143,11 +135,6 @@ type Project = {
     maximum?: number | string;
     currency_id?: number | string;
   };
-  currency?: {
-    id?: number | string;
-    code?: string;
-    sign?: string;
-  };
   location?: {
     country?: {
       code?: string;
@@ -156,21 +143,18 @@ type Project = {
   };
 };
 
-function text(value: unknown): string {
+function getText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function numberValue(value: unknown): number | null {
+function getNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
   }
 
-  if (typeof value === "string" && value.trim()) {
+  if (typeof value === "string" && value.trim() !== "") {
     const result = Number(value);
-
-    if (Number.isFinite(result)) {
-      return result;
-    }
+    return Number.isFinite(result) ? result : null;
   }
 
   return null;
@@ -222,23 +206,23 @@ function extractProjects(data: unknown): Project[] {
 }
 
 function getCountryCode(project: Project): string | null {
-  const code = text(project.location?.country?.code).toUpperCase();
+  const code = getText(
+    project.location?.country?.code
+  ).toUpperCase();
 
   if (code && COUNTRIES[code]) {
     return code;
   }
 
-  const name = text(project.location?.country?.name).toUpperCase();
+  const name = getText(
+    project.location?.country?.name
+  ).toUpperCase();
 
-  if (name && COUNTRY_NAMES[name]) {
-    return COUNTRY_NAMES[name];
-  }
-
-  return null;
+  return COUNTRY_NAMES[name] || null;
 }
 
 function getProjectUrl(project: Project): string {
-  const slug = text(project.seo_url);
+  const slug = getText(project.seo_url);
 
   if (
     slug.startsWith("https://") ||
@@ -248,22 +232,25 @@ function getProjectUrl(project: Project): string {
   }
 
   if (slug) {
-    return `https://www.freelancer.com/projects/${slug}`;
+    return "https://www.freelancer.com/projects/" + slug;
   }
 
   if (project.id !== undefined) {
-    return `https://www.freelancer.com/projects/${project.id}`;
+    return (
+      "https://www.freelancer.com/projects/" +
+      String(project.id)
+    );
   }
 
   return "https://www.freelancer.com/search/projects";
 }
 
 function getPublishedDate(project: Project): string {
-  const submitted = numberValue(project.time_submitted);
+  const submitted = getNumber(project.time_submitted);
 
   if (submitted !== null && submitted > 0) {
     const milliseconds =
-      submitted > 10_000_000_000
+      submitted > 10000000000
         ? submitted
         : submitted * 1000;
 
@@ -277,47 +264,43 @@ function getPublishedDate(project: Project): string {
   return new Date().toISOString();
 }
 
-function getMatchedTerms(project: Project): {
+function getMatches(project: Project): {
   services: string[];
   actions: string[];
 } {
-  const title = text(project.title).toLowerCase();
+  const title = getText(project.title).toLowerCase();
 
   const description = (
-    text(project.description) ||
-    text(project.preview_description)
+    getText(project.description) ||
+    getText(project.preview_description)
   ).toLowerCase();
 
-  const combined = `${title} ${description}`;
+  const combined = title + " " + description;
 
-  const services = SERVICE_TERMS.filter((term) =>
-    combined.includes(term.toLowerCase())
-  );
-
-  const actions = ACTION_TERMS.filter((term) =>
-    combined.includes(term.toLowerCase())
-  );
-
-  return { services, actions };
+  return {
+    services: SERVICE_TERMS.filter((term) =>
+      combined.includes(term.toLowerCase())
+    ),
+    actions: ACTION_TERMS.filter((term) =>
+      combined.includes(term.toLowerCase())
+    ),
+  };
 }
 
 function isRelevantProject(
   project: Project,
-  matched: { services: string[]; actions: string[] }
+  matches: { services: string[]; actions: string[] }
 ): boolean {
-  if (matched.services.length === 0) {
+  if (matches.services.length === 0) {
     return false;
   }
 
-  // A software-related word alone is not sufficient.
-  // The project must also show a development or purchasing action.
-  if (matched.actions.length === 0) {
+  if (matches.actions.length === 0) {
     return false;
   }
 
-  const title = text(project.title).toLowerCase();
+  const title = getText(project.title).toLowerCase();
 
-  // Exclude obvious non-development work.
   const excludedTerms = [
     "logo design",
     "tax filing",
@@ -327,7 +310,6 @@ function isRelevantProject(
     "portrait retouching",
     "virtual assistant",
     "job application assistant",
-    "sales representative",
     "cold calling",
     "screenplay",
   ];
@@ -342,44 +324,26 @@ function isRelevantProject(
 function createSignal(
   project: Project,
   countryCode: string,
-  matched: { services: string[]; actions: string[] }
+  matches: { services: string[]; actions: string[] }
 ) {
   const description =
-    text(project.description) ||
-    text(project.preview_description);
+    getText(project.description) ||
+    getText(project.preview_description);
 
-  const minimum = numberValue(project.budget?.minimum);
-  const maximum = numberValue(project.budget?.maximum);
-
-  const hasBudget = minimum !== null || maximum !== null;
+  const minimum = getNumber(project.budget?.minimum);
+  const maximum = getNumber(project.budget?.maximum);
 
   let confidence = 65;
 
-  if (matched.services.length >= 2) {
-    confidence += 5;
-  }
+  if (matches.services.length >= 2) confidence += 5;
+  if (matches.actions.length >= 2) confidence += 5;
+  if (description.length > 200) confidence += 5;
 
-  if (matched.actions.length >= 2) {
-    confidence += 5;
-  }
-
-  if (description.length > 200) {
-    confidence += 5;
-  }
-
-  if (hasBudget) {
-    confidence += 5;
-  }
-
-  confidence = Math.min(confidence, 85);
-
-  const budgetEvidence = hasBudget
-    ? `Freelancer lists a budget minimum of ${minimum ?? "unknown"} and maximum of ${maximum ?? "unknown"}. Currency has not been verified.`
-    : "Budget not confirmed.";
+  confidence = Math.min(confidence, 80);
 
   return {
-    id: `freelancer-${project.id}`,
-    title: text(project.title),
+    id: "freelancer-" + String(project.id),
+    title: getText(project.title),
     organisation:
       "Freelancer project owner (organisation not independently verified)",
     source: "Freelancer",
@@ -388,17 +352,13 @@ function createSignal(
     country: COUNTRIES[countryCode],
     countryCode,
     countryEvidence:
-      "Returned by Freelancer using its country-specific project search filter. Individual owner location was not provided.",
+      "Returned by Freelancer using its country-specific search filter. Individual owner location was not provided.",
     intentType: "PROJECT_OPPORTUNITY",
-    evidence: [
-      description,
-      budgetEvidence,
-    ]
-      .filter(Boolean)
-      .join(" "),
+    evidence:
+      description || "No project description provided.",
     matchedTerms: [
-      ...matched.services,
-      ...matched.actions,
+      ...matches.services,
+      ...matches.actions,
     ],
     confidence,
     status: "POTENTIAL_BUYER",
@@ -434,7 +394,7 @@ async function searchFreelancer(
 
   try {
     const response = await fetch(
-      `${API_URL}?${params.toString()}`,
+      API_URL + "?" + params.toString(),
       {
         method: "GET",
         headers: {
@@ -449,7 +409,7 @@ async function searchFreelancer(
     if (!response.ok) {
       return {
         projects: [],
-        error: `Freelancer HTTP ${response.status}`,
+        error: "Freelancer HTTP " + response.status,
       };
     }
 
@@ -477,7 +437,7 @@ export async function GET(request: NextRequest) {
       {
         success: false,
         version: VERSION,
-        error: "FREELANCER_ACCESS_TOKEN is missing.",
+        error: "Freelancer access token is missing.",
         data: { signals: [] },
       },
       { status: 503 }
@@ -524,7 +484,7 @@ export async function GET(request: NextRequest) {
     );
 
     if (result.error) {
-      errors.push(`${searchTerm}: ${result.error}`);
+      errors.push(searchTerm + ": " + result.error);
     } else {
       successfulSearches++;
       allProjects.push(...result.projects);
@@ -559,7 +519,6 @@ export async function GET(request: NextRequest) {
   for (const project of projects) {
     const actualCountry = getCountryCode(project);
 
-    // Reject only when Freelancer explicitly supplies a different country.
     if (actualCountry && actualCountry !== countryCode) {
       diagnostics.countryMismatch++;
       diagnostics.rejectedProjects++;
@@ -570,9 +529,9 @@ export async function GET(request: NextRequest) {
       diagnostics.missingCountry++;
     }
 
-    const matched = getMatchedTerms(project);
+    const matches = getMatches(project);
 
-    if (!isRelevantProject(project, matched)) {
+    if (!isRelevantProject(project, matches)) {
       diagnostics.rejectedProjects++;
       continue;
     }
@@ -582,7 +541,7 @@ export async function GET(request: NextRequest) {
     const signal = createSignal(
       project,
       countryCode,
-      matched
+      matches
     );
 
     if (signal.confidence >= minConfidence) {
@@ -617,4 +576,3 @@ export async function GET(request: NextRequest) {
     },
   });
 }
-```
