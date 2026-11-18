@@ -32,6 +32,18 @@ const SERVICES = [
   { label: "Project opportunities", value: "PROJECT_OPPORTUNITY" },
 ];
 
+type Contact = {
+  email: string | null;
+  emailStatus: string;
+  emailDomainMx: boolean | null;
+  phone: string | null;
+  phoneStatus: string;
+  website: string | null;
+  contactPage: string | null;
+  sourceUrl: string | null;
+  discoveredAt: string;
+};
+
 type Signal = {
   id: string;
   title: string;
@@ -46,6 +58,14 @@ type Signal = {
   matchedTerms: string[];
   confidence: number;
   status: string;
+  contact?: Contact;
+  budget?: {
+    minimum: number | null;
+    maximum: number | null;
+    currencyId: number | string | null;
+    currencyVerified: boolean;
+    meetsMinimumBudget: boolean;
+  };
 };
 
 const styles: Record<string, React.CSSProperties> = {
@@ -124,13 +144,12 @@ export default function Home() {
         minConfidence: minimumConfidence,
       });
 
-      if (service) {
-        params.set("type", service);
-      }
+      if (service) params.set("type", service);
 
-      const response = await fetch(`/intent?${params.toString()}`, {
-        cache: "no-store",
-      });
+      const response = await fetch(
+        `/intent?${params.toString()}`,
+        { cache: "no-store" }
+      );
 
       const result = await response.json();
 
@@ -140,25 +159,20 @@ export default function Home() {
         );
       }
 
-      // The API response contains signals inside result.data.signals.
-      // The fallback also supports the older result.signals structure.
       const receivedSignals =
         result?.data?.signals ?? result?.signals;
 
       if (!Array.isArray(receivedSignals)) {
-        throw new Error(
-          "The API responded successfully, but its signals list was not found."
-        );
+        throw new Error("The signals list was not found.");
       }
 
       setSignals(receivedSignals);
       setSearched(true);
-
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : "Unable to connect to the Buyer Intent Hunter."
+          : "Unable to connect to GODSLEAD."
       );
     } finally {
       setLoading(false);
@@ -179,13 +193,113 @@ export default function Home() {
     "Settings",
   ];
 
+  function renderContact(contact?: Contact) {
+    if (!contact) {
+      return (
+        <div style={{ color: "#fbbf24" }}>
+          Contact discovery information unavailable.
+        </div>
+      );
+    }
+
+    return (
+      <div style={{
+        background: "#0b1220",
+        padding: 15,
+        borderRadius: 8,
+        marginTop: 15,
+      }}>
+        <h4 style={{ color: "#38bdf8", marginTop: 0 }}>
+          Verified Contact Discovery
+        </h4>
+
+        <p>
+          <strong>Business email:</strong>{" "}
+          {contact.email || "Not found"}
+        </p>
+
+        <p style={{ color: "#94a3b8", fontSize: 12 }}>
+          Email status: {contact.emailStatus}
+        </p>
+
+        <p>
+          <strong>Business phone:</strong>{" "}
+          {contact.phone || "Not found"}
+        </p>
+
+        <p style={{ color: "#94a3b8", fontSize: 12 }}>
+          Phone status: {contact.phoneStatus}
+        </p>
+
+        <p>
+          <strong>Company website:</strong>{" "}
+          {contact.website ? (
+            <a
+              href={contact.website}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: "#38bdf8" }}
+            >
+              Open website ↗
+            </a>
+          ) : (
+            "Not found"
+          )}
+        </p>
+
+        <p>
+          <strong>Contact page:</strong>{" "}
+          {contact.contactPage ? (
+            <a
+              href={contact.contactPage}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: "#38bdf8" }}
+            >
+              Open contact page ↗
+            </a>
+          ) : (
+            "Not found"
+          )}
+        </p>
+
+        <p style={{ color: "#94a3b8", fontSize: 12 }}>
+          Contact source:{" "}
+          {contact.sourceUrl ? (
+            <a
+              href={contact.sourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: "#38bdf8" }}
+            >
+              View evidence ↗
+            </a>
+          ) : (
+            "Not available"
+          )}
+        </p>
+
+        <p style={{ color: "#94a3b8", fontSize: 11 }}>
+          Discovered: {new Date(contact.discoveredAt).toLocaleString()}
+        </p>
+
+        <p style={{ color: "#fbbf24", fontSize: 11 }}>
+          MX verification checks the email domain's mail configuration,
+          not the existence of an individual mailbox. Phone validation
+          checks format, not whether the number is active or belongs
+          to the buyer.
+        </p>
+      </div>
+    );
+  }
+
   function renderSignals(items: Signal[]) {
     if (!items.length) {
       return (
         <div style={{ ...styles.card, textAlign: "center", padding: 35 }}>
           <h3>No opportunities found</h3>
           <p style={{ color: "#94a3b8" }}>
-            Try another country or lower the minimum confidence filter.
+            Try another country or lower the confidence filter.
           </p>
         </div>
       );
@@ -246,9 +360,11 @@ export default function Home() {
               fontSize: 13,
               lineHeight: 1.6,
             }}>
-              <strong>Evidence:</strong>
+              <strong>Project evidence:</strong>
               <p>{signal.evidence}</p>
             </div>
+
+            {renderContact(signal.contact)}
 
             <p style={{ color: "#94a3b8", fontSize: 12 }}>
               Source: {signal.source}
@@ -270,7 +386,7 @@ export default function Home() {
                   display: "inline-block",
                 }}
               >
-                View Original Source ↗
+                View Original Project ↗
               </a>
 
               <button
@@ -296,7 +412,6 @@ export default function Home() {
       fontFamily: "Arial, sans-serif",
       display: "flex",
     }}>
-
       <aside style={{
         width: 245,
         minWidth: 210,
@@ -304,9 +419,7 @@ export default function Home() {
         padding: 18,
         borderRight: "1px solid #263244",
       }}>
-        <h1 style={{ color: "#38bdf8" }}>
-          GODSLEAD
-        </h1>
+        <h1 style={{ color: "#38bdf8" }}>GODSLEAD</h1>
 
         <small style={{ color: "#94a3b8" }}>
           AI SALES INTELLIGENCE
@@ -357,7 +470,7 @@ export default function Home() {
             <h1>Welcome to GODSLEAD</h1>
 
             <p style={{ color: "#94a3b8" }}>
-              Discover genuine buying opportunities and grow your business.
+              Discover genuine buying opportunities and business contacts.
             </p>
 
             <div style={{
@@ -382,8 +495,8 @@ export default function Home() {
             <div style={{ ...styles.card, marginTop: 25 }}>
               <h2>Buyer Intent Hunter</h2>
               <p style={{ color: "#94a3b8" }}>
-                Find public signals of organisations seeking software
-                and IT development services.
+                Discover software buyers and their publicly available
+                business contact information.
               </p>
               <button
                 style={styles.button}
@@ -400,7 +513,7 @@ export default function Home() {
             <h1>Buyer Intent Hunter</h1>
 
             <p style={{ color: "#94a3b8" }}>
-              Search public buying signals across your approved markets.
+              Search opportunities and discover publicly available contacts.
             </p>
 
             <div style={{
@@ -465,14 +578,15 @@ export default function Home() {
                     opacity: loading ? 0.6 : 1,
                   }}
                 >
-                  {loading ? "Searching..." : "Search Opportunities"}
+                  {loading ? "Searching and discovering contacts..." : "Search Opportunities"}
                 </button>
               </div>
             </div>
 
             {loading && (
               <div style={styles.card}>
-                Searching public sources. This may take some time...
+                Searching projects and checking publicly available
+                company contact pages. This may take some time.
               </div>
             )}
 
@@ -485,17 +599,34 @@ export default function Home() {
                 <strong>Search error</strong>
                 <p>{error}</p>
                 <p>
-                  Please check that the API file exists at
-                  app/intent/route.ts.
+                  Check that the API file exists at app/intent/route.ts.
                 </p>
               </div>
             )}
 
             {searched && (
               <>
-                <h2>
-                  Search Results: {signals.length}
-                </h2>
+                <h2>Search Results: {signals.length}</h2>
+
+                <div style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))",
+                  gap: 12,
+                  margin: "18px 0",
+                }}>
+                  {[
+                    ["Email contacts", signals.filter(s => s.contact?.email).length],
+                    ["Phone contacts", signals.filter(s => s.contact?.phone).length],
+                    ["Both contacts", signals.filter(s => s.contact?.email && s.contact?.phone).length],
+                    ["No contacts", signals.filter(s => !s.contact?.email && !s.contact?.phone).length],
+                  ].map(([label, value]) => (
+                    <div key={String(label)} style={styles.card}>
+                      <p style={{ color: "#94a3b8" }}>{label}</p>
+                      <h2>{value}</h2>
+                    </div>
+                  ))}
+                </div>
+
                 {renderSignals(signals)}
               </>
             )}
@@ -506,9 +637,10 @@ export default function Home() {
               marginTop: 25,
               lineHeight: 1.6,
             }}>
-              Important: Results are preliminary public buying signals,
-              not independently verified active buyers. Always inspect
-              the original source before contacting an organisation.
+              Contact information is collected from publicly accessible
+              project descriptions and company websites. Domain MX checks
+              do not verify individual mailboxes. Phone formatting does
+              not establish ownership or active status.
             </p>
           </>
         )}
@@ -516,6 +648,7 @@ export default function Home() {
         {active === "Saved Opportunities" && (
           <>
             <h1>Saved Opportunities</h1>
+
             <p style={{ color: "#94a3b8" }}>
               Opportunities saved in this browser.
             </p>
@@ -523,8 +656,7 @@ export default function Home() {
             <div style={{ marginTop: 25 }}>
               {saved.length === 0 ? (
                 <div style={styles.card}>
-                  No saved opportunities yet. Search for opportunities
-                  and select Save Opportunity.
+                  No saved opportunities yet.
                 </div>
               ) : (
                 saved.map(signal => (
@@ -533,9 +665,12 @@ export default function Home() {
                     marginBottom: 15,
                   }}>
                     <h3>{signal.title}</h3>
+
                     <p style={{ color: "#94a3b8" }}>
                       {signal.country} · {signal.intentType}
                     </p>
+
+                    {renderContact(signal.contact)}
 
                     <a
                       href={signal.sourceUrl}
@@ -574,7 +709,6 @@ export default function Home() {
             <h2>{active}</h2>
             <p style={{ color: "#94a3b8" }}>
               This module is planned for a future development stage.
-              The Buyer Intent Hunter is the first module being connected.
             </p>
             <button
               style={styles.button}
