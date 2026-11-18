@@ -1,7 +1,15 @@
+**File:** `app/intent/route.ts`
+
+```typescript
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
+
+const FREELANCER_API =
+  "https://www.freelancer.com/api/projects/0.1/projects/active/";
+
+const MINIMUM_BUDGET_USD = 5000;
 
 const COUNTRIES = [
   { name: "United States", code: "US", aliases: ["United States", "USA"] },
@@ -26,63 +34,23 @@ const COUNTRIES = [
   { name: "Guyana", code: "GY", aliases: ["Guyana"] },
 ];
 
-const DIRECT_INTENT =
-  /\b(looking for a developer|looking for developers|need a developer|need developers|looking for a development agency|need a development team|looking for a software company|need a software company|seeking a development partner|need someone to build|looking to hire a developer|request for proposal|RFP|seeking software development services|looking for an app developer)\b/i;
-
-const SERVICE_TERMS =
-  /\b(software development|software developer|web development|website development|mobile app development|app development|android development|ios development|MVP development|custom software|custom application|AI development|machine learning|automation development|blockchain development|SaaS development|e-commerce development|development agency|development team|development partner)\b/i;
-
-const EXCLUDED =
-  /\b(hire me|looking for a job|seeking employment|open to work|available for work|my portfolio|my services|we provide software|we offer development|our development services|SEO services|digital marketing agency|job vacancy|job opening|salary|internship|tutorial|homework|student project|open source contribution|volunteer|unpaid work|course|training)\b/i;
-
-const QUERIES = [
-  "looking for a software developer",
-  "need a software development company",
-  "looking for an app development team",
-  "need a website development agency",
-  "looking for an MVP development partner",
-  "seeking custom software development",
+const SEARCH_TERMS = [
+  "software development",
+  "website development",
+  "mobile app development",
+  "AI automation",
+  "blockchain development",
+  "MVP SaaS",
 ];
 
-function identifyCountry(text: string) {
-  const matches = COUNTRIES.filter(country =>
-    country.aliases.some(alias =>
-      new RegExp(
-        `\\b${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
-        "i"
-      ).test(text)
-    )
-  );
+const SERVICE_TERMS =
+  /\b(software|website|web application|web development|mobile app|mobile application|android|ios|MVP|SaaS|AI development|artificial intelligence|machine learning|automation|blockchain|web3|custom application|enterprise software|IT outsourcing|dedicated development team|e-commerce platform|application development)\b/i;
 
-  return matches.length === 1 ? matches[0] : null;
-}
+const BUYING_TERMS =
+  /\b(looking for|need|require|required|seeking|want to build|want to develop|hire|hiring|build me|develop for us|development partner|development company|development team|project requirement|project scope|new application|new website|new platform)\b/i;
 
-function extractBudget(text: string) {
-  const match = text.match(
-    /(?:budget|project cost|project value|development budget)[^.\n]{0,50}?\$\s?([\d,]+(?:\.\d+)?)\s?(k|m)?\b/i
-  );
-
-  if (!match) {
-    return {
-      amount: null,
-      currency: null,
-      status: "UNKNOWN",
-      meetsMinimum: false,
-    };
-  }
-
-  let amount = Number(match[1].replace(/,/g, ""));
-
-  if (match[2]?.toLowerCase() === "k") amount *= 1000;
-  if (match[2]?.toLowerCase() === "m") amount *= 1000000;
-
-  return {
-    amount,
-    currency: "USD",
-    status: "EXPLICITLY_STATED",
-    meetsMinimum: amount >= 5000,
-  };
-}
+const EXCLUDED_TERMS =
+  /\b(hire me|looking for a job|seeking employment|open to work|available for work|my portfolio|my services|we provide software|we offer development|our development services|SEO services|digital marketing agency|job vacancy|job opening|salary|internship|tutorial|homework|student project|volunteer|unpaid work|course|training)\b/i;
 
 function classifyType(text: string) {
   if (/\b(RFP|request for proposal|tender|RFQ)\b/i.test(text)) {
@@ -96,262 +64,319 @@ function classifyType(text: string) {
   return "PROJECT_OPPORTUNITY";
 }
 
-function makeSignal(input: {
-  id: string;
-  title: string;
-  description: string;
-  url: string;
-  source: string;
-  date: string | null;
-  countryCode: string;
-  category: "DIRECT" | "BUSINESS";
-  organisation?: string | null;
-}) {
-  const text = `${input.title}\n${input.description}`;
+function extractBudget(project: any) {
+  const budget = project?.budget;
 
-  if (EXCLUDED.test(text)) return null;
-  if (!SERVICE_TERMS.test(text)) return null;
-
-  const direct = DIRECT_INTENT.test(text);
-
-  if (input.category === "DIRECT" && !direct) return null;
-
-  if (input.category === "BUSINESS" && direct) {
-    input.category = "DIRECT";
+  if (!budget || typeof budget.minimum !== "number") {
+    return {
+      amount: null,
+      minimum: null,
+      maximum: null,
+      currency: null,
+      currencyId: null,
+      status: "UNKNOWN",
+      meetsMinimum: false,
+    };
   }
 
-  const country = identifyCountry(text);
-
-  if (!country || country.code !== input.countryCode) return null;
-
-  let confidence = 35;
-
-  if (direct) confidence += 30;
-  if (SERVICE_TERMS.test(text)) confidence += 15;
-  if (input.organisation) confidence += 5;
-  if (extractBudget(text).meetsMinimum) confidence += 15;
-
-  confidence = Math.min(confidence, 95);
-
-  const budget = extractBudget(text);
+  const currencyId =
+    typeof budget.currency_id === "number"
+      ? budget.currency_id
+      : null;
 
   return {
-    id: input.id,
-    title: input.title,
-    organisation: input.organisation || null,
-    source: input.source,
-    sourceUrl: input.url,
-    publishedAt: input.date,
-    country: country.name,
-    countryCode: country.code,
-    intentType: classifyType(text),
-    evidence: input.description.slice(0, 2500),
-    matchedTerms: [
-      ...new Set(
-        text.match(
-          /\b(software|developer|development|agency|vendor|mobile app|website|MVP|AI|automation|blockchain)\b/gi
-        ) || []
-      ),
-    ],
-    confidence,
-    status: direct ? "DIRECT_BUYING_SIGNAL" : "BUSINESS_OPPORTUNITY",
-    budget,
-    buyerClassification: "POTENTIAL_BUYER",
-    verificationStatus: "NOT_VERIFIED",
-    decisionMakerStatus: "NOT_VERIFIED",
-    category: direct ? "DIRECT_BUYER" : "BUSINESS_OPPORTUNITY",
+    amount: budget.minimum,
+    minimum: budget.minimum,
+    maximum:
+      typeof budget.maximum === "number"
+        ? budget.maximum
+        : null,
+    currency: null,
+    currencyId,
+    status: "EXPLICIT_AMOUNT_CURRENCY_UNVERIFIED",
+    meetsMinimum: false,
   };
 }
 
-async function searchHackerNews(countryCode: string) {
-  const country = COUNTRIES.find(item => item.code === countryCode)!;
-  const results: any[] = [];
-  const errors: string[] = [];
+function identifyCountry(project: any) {
+  const code = String(
+    project?.location?.country?.code || ""
+  ).toUpperCase();
 
-  for (const query of QUERIES) {
-    const params = new URLSearchParams({
-      query: `${query} ${country.name}`,
-      tags: "story",
-      hitsPerPage: "30",
-    });
+  if (!code) return null;
 
-    try {
-      const response = await fetch(
-        `https://hn.algolia.com/api/v1/search_by_date?${params}`,
-        {
-          cache: "no-store",
-          signal: AbortSignal.timeout(12000),
-        }
-      );
-
-      if (!response.ok) {
-        errors.push(`Hacker News HTTP ${response.status}`);
-        continue;
-      }
-
-      const data = await response.json();
-
-      for (const hit of data.hits || []) {
-        const title = hit.title || "";
-        const description = hit.story_text || "";
-        const url = hit.url ||
-          `https://news.ycombinator.com/item?id=${hit.objectID}`;
-
-        const signal = makeSignal({
-          id: `hn-${hit.objectID}`,
-          title,
-          description,
-          url,
-          source: "Hacker News Algolia",
-          date: hit.created_at,
-          countryCode,
-          category: "DIRECT",
-          organisation: hit.author || null,
-        });
-
-        if (signal) results.push(signal);
-      }
-    } catch (error) {
-      errors.push(
-        error instanceof Error ? error.message : "Hacker News search failed"
-      );
-    }
-  }
-
-  return { results, errors };
+  return COUNTRIES.find(country => country.code === code) || null;
 }
 
-async function searchGDELT(countryCode: string) {
-  const country = COUNTRIES.find(item => item.code === countryCode)!;
-  const results: any[] = [];
-  const errors: string[] = [];
-
-  const queries = [
-    `"${country.name}" software development project`,
-    `"${country.name}" digital transformation application`,
-  ];
-
-  for (const query of queries) {
-    const params = new URLSearchParams({
-      query,
-      mode: "ArtList",
-      format: "json",
-      maxrecords: "50",
-      sort: "DateDesc",
-    });
-
-    try {
-      const response = await fetch(
-        `https://api.gdeltproject.org/api/v2/doc/doc?${params}`,
-        {
-          cache: "no-store",
-          signal: AbortSignal.timeout(15000),
-        }
-      );
-
-      if (!response.ok) {
-        errors.push(`GDELT HTTP ${response.status}`);
-        continue;
-      }
-
-      const data = await response.json();
-
-      for (const article of data.articles || []) {
-        const title = article.title || "";
-        const description = article.seendate || "";
-
-        const signal = makeSignal({
-          id: `gdelt-${article.url}`,
-          title,
-          description,
-          url: article.url,
-          source: "GDELT Global News",
-          date: article.seendate || null,
-          countryCode,
-          category: "BUSINESS",
-          organisation: article.domain || null,
-        });
-
-        if (signal) results.push(signal);
-      }
-    } catch (error) {
-      errors.push(
-        error instanceof Error ? error.message : "GDELT search failed"
-      );
-    }
+function getProjectUrl(project: any) {
+  if (project.seo_url) {
+    return `https://www.freelancer.com/projects/${project.seo_url}`;
   }
 
-  return { results, errors };
+  return `https://www.freelancer.com/projects/${project.id}`;
 }
 
-async function searchGitHub(countryCode: string) {
-  const country = COUNTRIES.find(item => item.code === countryCode)!;
+function makeSignal(project: any, selectedCountry: string) {
+  const title = String(project?.title || "");
+  const description = String(
+    project?.description ||
+    project?.preview_description ||
+    ""
+  );
+
+  const text = `${title}\n${description}`;
+
+  if (!project?.id || !title || !description) {
+    return null;
+  }
+
+  if (project.status !== "active") {
+    return null;
+  }
+
+  if (EXCLUDED_TERMS.test(text)) {
+    return null;
+  }
+
+  if (!SERVICE_TERMS.test(text)) {
+    return null;
+  }
+
+  const country = identifyCountry(project);
+
+  // Never guess the project country.
+  if (!country || country.code !== selectedCountry) {
+    return null;
+  }
+
+  const budget = extractBudget(project);
+
+  const directBuyingIntent = BUYING_TERMS.test(text);
+
+  let confidence = 70;
+
+  if (SERVICE_TERMS.test(title)) {
+    confidence += 10;
+  }
+
+  if (directBuyingIntent) {
+    confidence += 5;
+  }
+
+  if (budget.status !== "UNKNOWN") {
+    confidence += 5;
+  }
+
+  confidence = Math.min(confidence, 90);
+
+  const organisation =
+    project.owner_info?.username ||
+    project.owner_info?.public_name ||
+    null;
+
+  const publishedAt = project.time_submitted
+    ? new Date(project.time_submitted * 1000).toISOString()
+    : null;
+
+  return {
+    id: `freelancer-${project.id}`,
+
+    title,
+
+    organisation,
+
+    source: "Freelancer",
+
+    sourceUrl: getProjectUrl(project),
+
+    publishedAt,
+
+    country: country.name,
+
+    countryCode: country.code,
+
+    intentType: classifyType(text),
+
+    evidence: description.slice(0, 2500),
+
+    matchedTerms: [
+      ...new Set(
+        text.match(
+          /\b(software|website|developer|development|mobile app|android|ios|MVP|SaaS|AI|automation|blockchain|web3)\b/gi
+        ) || []
+      ),
+    ],
+
+    confidence,
+
+    status: "ACTIVE_FREELANCER_PROJECT",
+
+    budget,
+
+    buyerClassification: "POTENTIAL_BUYER",
+
+    verificationStatus: "NOT_VERIFIED",
+
+    decisionMakerStatus: "NOT_VERIFIED",
+
+    category: "DIRECT_BUYER",
+
+    marketplace: {
+      projectId: project.id,
+      projectStatus: project.status,
+      projectType: project.type || null,
+      bidCount: project.bid_stats?.bid_count ?? null,
+      averageBid: project.bid_stats?.bid_avg ?? null,
+      ownerId: project.owner_id ?? null,
+      ownerCountry:
+        project.owner_info?.country?.name ?? null,
+    },
+  };
+}
+
+async function searchFreelancer(
+  countryCode: string
+) {
+  const token = process.env.FREELANCER_ACCESS_TOKEN;
+
+  if (!token) {
+    return {
+      results: [],
+      errors: ["FREELANCER_ACCESS_TOKEN is not configured."],
+      requestCount: 0,
+    };
+  }
+
   const results: any[] = [];
   const errors: string[] = [];
 
-  const query = `"looking for a developer" ${country.name}`;
+  const country = COUNTRIES.find(
+    item => item.code === countryCode
+  );
 
-  const params = new URLSearchParams({
-    q: `${query} is:issue is:open created:>=2026-05-18`,
-    per_page: "50",
-    sort: "created",
-    order: "desc",
-  });
+  if (!country) {
+    return {
+      results,
+      errors: ["Unsupported country."],
+      requestCount: 0,
+    };
+  }
 
-  try {
-    const response = await fetch(
-      `https://api.github.com/search/issues?${params}`,
-      {
-        headers: {
-          Accept: "application/vnd.github+json",
-          "X-GitHub-Api-Version": "2022-11-28",
-          "User-Agent": "GODSLEAD",
-        },
-        cache: "no-store",
-        signal: AbortSignal.timeout(12000),
-      }
+  // One authenticated request for each targeted search term.
+  // Requests are sequential to reduce rate-limit pressure.
+  for (const query of SEARCH_TERMS) {
+    const params = new URLSearchParams();
+
+    params.set("query", query);
+
+    params.append(
+      "countries[]",
+      countryCode.toLowerCase()
     );
 
-    if (!response.ok) {
-      errors.push(`GitHub HTTP ${response.status}`);
-      return { results, errors };
-    }
+    params.set("project_types[]", "fixed");
+    params.append("project_types[]", "hourly");
 
-    const data = await response.json();
+    params.set("full_description", "true");
+    params.set("job_details", "true");
+    params.set("user_details", "true");
+    params.set("location_details", "true");
 
-    for (const issue of data.items || []) {
-      const signal = makeSignal({
-        id: `gh-${issue.id}`,
-        title: issue.title || "",
-        description: issue.body || "",
-        url: issue.html_url,
-        source: "GitHub Public Issues",
-        date: issue.created_at,
-        countryCode,
-        category: "DIRECT",
-        organisation: issue.user?.login || null,
+    params.set("limit", "30");
+    params.set("offset", "0");
+
+    const url = `${FREELANCER_API}?${params.toString()}`;
+
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+
+        headers: {
+          "freelancer-oauth-v1": token,
+          Accept: "application/json",
+        },
+
+        // Cache responses for five minutes.
+        next: {
+          revalidate: 300,
+        },
+
+        signal: AbortSignal.timeout(12000),
       });
 
-      if (signal) results.push(signal);
+      if (!response.ok) {
+        errors.push(
+          `Freelancer "${query}" HTTP ${response.status}`
+        );
+
+        continue;
+      }
+
+      const data = await response.json();
+
+      if (data.status !== "success") {
+        errors.push(
+          `Freelancer "${query}" returned an unsuccessful response.`
+        );
+
+        continue;
+      }
+
+      const projects =
+        data.result?.projects ||
+        data.result?.items ||
+        (Array.isArray(data.result)
+          ? data.result
+          : []);
+
+      for (const project of projects) {
+        const signal = makeSignal(
+          project,
+          countryCode
+        );
+
+        if (signal) {
+          results.push(signal);
+        }
+      }
+    } catch (error) {
+      errors.push(
+        error instanceof Error
+          ? `Freelancer "${query}": ${error.message}`
+          : `Freelancer "${query}" search failed.`
+      );
     }
-  } catch (error) {
-    errors.push(
-      error instanceof Error ? error.message : "GitHub search failed"
-    );
   }
 
-  return { results, errors };
+  return {
+    results,
+    errors,
+    requestCount: SEARCH_TERMS.length,
+  };
 }
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
 
-    const countryCode = searchParams.get("country") || "US";
-    const requestedType = searchParams.get("type") || "";
-    const minConfidence = Number(searchParams.get("minConfidence") || 60);
+    const countryCode = (
+      searchParams.get("country") || "US"
+    ).toUpperCase();
 
-    const country = COUNTRIES.find(item => item.code === countryCode);
+    const requestedType =
+      searchParams.get("type") || "";
+
+    const minConfidence = Math.max(
+      0,
+      Math.min(
+        100,
+        Number(searchParams.get("minConfidence") || 60)
+      )
+    );
+
+    const country = COUNTRIES.find(
+      item => item.code === countryCode
+    );
 
     if (!country) {
       return NextResponse.json(
@@ -373,110 +398,130 @@ export async function GET(request: Request) {
 
     if (!allowedTypes.includes(requestedType)) {
       return NextResponse.json(
-        { success: false, error: "Invalid opportunity type." },
+        {
+          success: false,
+          error: "Invalid opportunity type.",
+        },
         { status: 400 }
       );
     }
 
-    const [hn, gdelt, github] = await Promise.all([
-      searchHackerNews(countryCode),
-      searchGDELT(countryCode),
-      searchGitHub(countryCode),
-    ]);
-
-    const all = [
-      ...hn.results,
-      ...gdelt.results,
-      ...github.results,
-    ];
+    const freelancer = await searchFreelancer(
+      countryCode
+    );
 
     const unique = new Map<string, any>();
 
-    for (const signal of all) {
-      if (signal.confidence < minConfidence) continue;
+    for (const signal of freelancer.results) {
+      if (signal.confidence < minConfidence) {
+        continue;
+      }
 
       if (
         requestedType &&
         signal.intentType !== requestedType
-      ) continue;
+      ) {
+        continue;
+      }
 
       unique.set(signal.id, signal);
     }
 
-    const signals = Array.from(unique.values()).sort(
-      (a, b) =>
+    const signals = Array.from(
+      unique.values()
+    ).sort((a, b) => {
+      return (
         new Date(b.publishedAt || 0).getTime() -
         new Date(a.publishedAt || 0).getTime()
-    );
+      );
+    });
 
     return NextResponse.json({
       success: true,
+
       platform: "GODSLEAD",
-      engine: "INTERNATIONAL MULTI-SOURCE DISCOVERY",
-      version: "5.0.0",
+
+      engine: "FREELANCER OFFICIAL PROJECT DISCOVERY",
+
+      version: "6.0.0",
+
       generatedAt: new Date().toISOString(),
 
       configuration: {
         country: country.name,
         countryCode,
-        minimumBudgetUSD: 5000,
+
+        minimumBudgetUSD: MINIMUM_BUDGET_USD,
+
         minimumConfidence: minConfidence,
+
         approvedCountries: COUNTRIES,
+
+        services: [
+          "Software development",
+          "Website development",
+          "Web applications",
+          "Android and iOS applications",
+          "AI and machine learning",
+          "Automation",
+          "Blockchain and Web3",
+          "MVP and SaaS development",
+          "Enterprise software",
+          "IT outsourcing",
+        ],
       },
 
       sources: [
         {
-          name: "Hacker News Algolia",
-          access: "Public API",
-          results: hn.results.length,
-        },
-        {
-          name: "GDELT",
-          access: "Public API",
-          results: gdelt.results.length,
-        },
-        {
-          name: "GitHub",
-          access: "Public API",
-          results: github.results.length,
+          name: "Freelancer",
+          access: "Authenticated Official API",
+          endpoint:
+            "/projects/0.1/projects/active/",
+          results: signals.length,
+          requests: freelancer.requestCount,
         },
       ],
 
       summary: {
         totalSignals: signals.length,
-        directBuyerSignals: signals.filter(
-          item => item.category === "DIRECT_BUYER"
-        ).length,
-        businessOpportunities: signals.filter(
-          item => item.category === "BUSINESS_OPPORTUNITY"
-        ).length,
+
+        directBuyerSignals: signals.length,
+
+        businessOpportunities: 0,
+
         budgetConfirmed: signals.filter(
-          item => item.budget.meetsMinimum
+          item =>
+            item.budget.meetsMinimum
         ).length,
+
         budgetUnknown: signals.filter(
-          item => item.budget.status === "UNKNOWN"
+          item =>
+            item.budget.status === "UNKNOWN" ||
+            item.budget.status ===
+              "EXPLICIT_AMOUNT_CURRENCY_UNVERIFIED"
         ).length,
+
         verifiedBuyers: 0,
+
+        potentialBuyers: signals.length,
       },
 
       signals,
 
       diagnostics: {
-        errors: [
-          ...hn.errors,
-          ...gdelt.errors,
-          ...github.errors,
-        ],
+        errors: freelancer.errors,
       },
 
       message:
-        "Public discovery signals only. These sources do not independently verify purchasing authority, active requirements or budgets. Verify every opportunity before outreach.",
+        "Freelancer active projects are genuine marketplace project listings. They are potential buying opportunities, not independently verified organisations, budgets or decision-makers. Currency must be verified before treating a budget as USD 5,000 or more.",
     });
   } catch (error) {
     return NextResponse.json(
       {
         success: false,
+
         platform: "GODSLEAD",
+
         error:
           error instanceof Error
             ? error.message
@@ -486,3 +531,4 @@ export async function GET(request: Request) {
     );
   }
 }
+```
