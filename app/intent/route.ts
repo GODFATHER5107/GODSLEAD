@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const VERSION = "7.3.0";
+const VERSION = "7.4.0";
 
 const API_URL =
   "https://www.freelancer.com/api/projects/0.1/projects/active/";
@@ -123,6 +123,8 @@ const ACTION_TERMS = [
   "seeking a developer",
 ];
 
+type OwnerInfo = Record<string, unknown>;
+
 type Project = {
   id?: number | string;
   title?: string;
@@ -130,11 +132,19 @@ type Project = {
   preview_description?: string;
   seo_url?: string;
   time_submitted?: number | string;
+
+  owner_id?: number | string;
+  owner_info?: OwnerInfo;
+  user_details?: OwnerInfo;
+  owner?: OwnerInfo;
+  user?: OwnerInfo;
+
   budget?: {
     minimum?: number | string;
     maximum?: number | string;
     currency_id?: number | string;
   };
+
   location?: {
     country?: {
       code?: string;
@@ -144,7 +154,11 @@ type Project = {
 };
 
 function getText(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
+  if (typeof value === "string") return value.trim();
+
+  if (typeof value === "number") return String(value);
+
+  return "";
 }
 
 function getNumber(value: unknown): number | null {
@@ -155,6 +169,33 @@ function getNumber(value: unknown): number | null {
   if (typeof value === "string" && value.trim() !== "") {
     const result = Number(value);
     return Number.isFinite(result) ? result : null;
+  }
+
+  return null;
+}
+
+function getObject(value: unknown): OwnerInfo | null {
+  if (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+  ) {
+    return value as OwnerInfo;
+  }
+
+  return null;
+}
+
+function firstText(
+  object: OwnerInfo | null,
+  keys: string[]
+): string | null {
+  if (!object) return null;
+
+  for (const key of keys) {
+    const value = getText(object[key]);
+
+    if (value) return value;
   }
 
   return null;
@@ -173,12 +214,11 @@ function extractProjects(data: unknown): Project[] {
       for (const item of value) {
         visit(item, depth + 1);
       }
+
       return;
     }
 
-    if (typeof value !== "object") {
-      return;
-    }
+    if (typeof value !== "object") return;
 
     const object = value as Record<string, unknown>;
 
@@ -202,7 +242,105 @@ function extractProjects(data: unknown): Project[] {
   }
 
   visit(data, 0);
+
   return projects;
+}
+
+function getOwner(project: Project): OwnerInfo | null {
+  return (
+    getObject(project.owner_info) ||
+    getObject(project.user_details) ||
+    getObject(project.owner) ||
+    getObject(project.user)
+  );
+}
+
+function getBuyerInformation(project: Project) {
+  const owner = getOwner(project);
+
+  const name = firstText(owner, [
+    "display_name",
+    "displayName",
+    "name",
+    "full_name",
+    "fullName",
+  ]);
+
+  const username = firstText(owner, [
+    "username",
+    "user_name",
+    "userName",
+  ]);
+
+  const profileUrl = firstText(owner, [
+    "profile_url",
+    "profileUrl",
+    "public_profile_url",
+  ]);
+
+  const companyName = firstText(owner, [
+    "company_name",
+    "companyName",
+    "business_name",
+    "businessName",
+  ]);
+
+  const companyWebsite = firstText(owner, [
+    "company_website",
+    "companyWebsite",
+    "website",
+    "website_url",
+  ]);
+
+  const publicEmail = firstText(owner, [
+    "public_email",
+    "business_email",
+  ]);
+
+  const publicPhone = firstText(owner, [
+    "public_phone",
+    "business_phone",
+  ]);
+
+  const ownerCountry =
+    firstText(owner, [
+      "country_name",
+      "country",
+      "location",
+    ]);
+
+  const reputation = firstText(owner, [
+    "reputation",
+    "rating",
+  ]);
+
+  return {
+    ownerId:
+      project.owner_id !== undefined
+        ? String(project.owner_id)
+        : null,
+
+    name,
+    username,
+    profileUrl,
+    companyName,
+    companyWebsite,
+
+    publicEmail,
+    publicPhone,
+
+    country: ownerCountry,
+    reputation,
+
+    contactStatus:
+      publicEmail || publicPhone || profileUrl
+        ? "CONTACT_INFORMATION_AVAILABLE"
+        : "CONTACT_INFORMATION_NOT_RETURNED",
+
+    informationSource: "Freelancer API",
+
+    verificationStatus: "NOT_INDEPENDENTLY_VERIFIED",
+  };
 }
 
 function getCountryCode(project: Project): string | null {
@@ -210,9 +348,7 @@ function getCountryCode(project: Project): string | null {
     project.location?.country?.code
   ).toUpperCase();
 
-  if (code && COUNTRIES[code]) {
-    return code;
-  }
+  if (code && COUNTRIES[code]) return code;
 
   const name = getText(
     project.location?.country?.name
@@ -278,10 +414,11 @@ function getMatches(project: Project): {
   const combined = title + " " + description;
 
   return {
-    services: SERVICE_TERMS.filter((term) =>
+    services: SERVICE_TERMS.filter(term =>
       combined.includes(term.toLowerCase())
     ),
-    actions: ACTION_TERMS.filter((term) =>
+
+    actions: ACTION_TERMS.filter(term =>
       combined.includes(term.toLowerCase())
     ),
   };
@@ -291,11 +428,7 @@ function isRelevantProject(
   project: Project,
   matches: { services: string[]; actions: string[] }
 ): boolean {
-  if (matches.services.length === 0) {
-    return false;
-  }
-
-  if (matches.actions.length === 0) {
+  if (!matches.services.length || !matches.actions.length) {
     return false;
   }
 
@@ -314,11 +447,7 @@ function isRelevantProject(
     "screenplay",
   ];
 
-  if (excludedTerms.some((term) => title.includes(term))) {
-    return false;
-  }
-
-  return true;
+  return !excludedTerms.some(term => title.includes(term));
 }
 
 function createSignal(
@@ -343,28 +472,43 @@ function createSignal(
 
   return {
     id: "freelancer-" + String(project.id),
+
     title: getText(project.title),
+
     organisation:
+      getBuyerInformation(project).companyName ||
+      getBuyerInformation(project).name ||
       "Freelancer project owner (organisation not independently verified)",
+
+    buyer: getBuyerInformation(project),
+
     source: "Freelancer",
     sourceUrl: getProjectUrl(project),
     publishedAt: getPublishedDate(project),
+
     country: COUNTRIES[countryCode],
     countryCode,
+
     countryEvidence:
-      "Returned by Freelancer using its country-specific search filter. Individual owner location was not provided.",
+      "Returned by Freelancer using its country-specific project search filter. Individual owner location may not be available.",
+
     intentType: "PROJECT_OPPORTUNITY",
+
     evidence:
       description || "No project description provided.",
+
     matchedTerms: [
       ...matches.services,
       ...matches.actions,
     ],
+
     confidence,
     status: "POTENTIAL_BUYER",
+
     budget: {
       minimum,
       maximum,
+      currencyId: project.budget?.currency_id ?? null,
       currencyVerified: false,
       meetsMinimumBudget: false,
     },
@@ -382,13 +526,20 @@ async function searchFreelancer(
   const params = new URLSearchParams();
 
   params.set("query", searchTerm);
-  params.append("countries[]", countryCode.toLowerCase());
+
+  params.append(
+    "countries[]",
+    countryCode.toLowerCase()
+  );
+
   params.append("project_types[]", "fixed");
   params.append("project_types[]", "hourly");
+
   params.set("full_description", "true");
   params.set("job_details", "true");
   params.set("user_details", "true");
   params.set("location_details", "true");
+
   params.set("limit", "30");
   params.set("offset", "0");
 
@@ -454,7 +605,6 @@ export async function GET(request: NextRequest) {
         success: false,
         version: VERSION,
         error: "Unsupported country code.",
-        supportedCountries: Object.keys(COUNTRIES),
         data: { signals: [] },
       },
       { status: 400 }
@@ -512,6 +662,15 @@ export async function GET(request: NextRequest) {
     countryMismatch: 0,
     matchingServiceProjects: 0,
     rejectedProjects: 0,
+
+    ownerInformationReturned: 0,
+    ownerNameReturned: 0,
+    ownerUsernameReturned: 0,
+    companyNameReturned: 0,
+    publicEmailReturned: 0,
+    publicPhoneReturned: 0,
+    profileUrlReturned: 0,
+
     countryFilterUsed: countryCode.toLowerCase(),
     errors,
   };
@@ -528,6 +687,19 @@ export async function GET(request: NextRequest) {
     if (!actualCountry) {
       diagnostics.missingCountry++;
     }
+
+    const buyer = getBuyerInformation(project);
+
+    if (getOwner(project)) {
+      diagnostics.ownerInformationReturned++;
+    }
+
+    if (buyer.name) diagnostics.ownerNameReturned++;
+    if (buyer.username) diagnostics.ownerUsernameReturned++;
+    if (buyer.companyName) diagnostics.companyNameReturned++;
+    if (buyer.publicEmail) diagnostics.publicEmailReturned++;
+    if (buyer.publicPhone) diagnostics.publicPhoneReturned++;
+    if (buyer.profileUrl) diagnostics.profileUrlReturned++;
 
     const matches = getMatches(project);
 
@@ -560,17 +732,21 @@ export async function GET(request: NextRequest) {
     success: true,
     version: VERSION,
     source: "Freelancer API",
+
     country: {
       code: countryCode,
       name: COUNTRIES[countryCode],
     },
+
     diagnostics,
+
     summary: {
       totalSignals: signals.length,
       verifiedBuyers: 0,
       potentialBuyers: signals.length,
       rejectedBuyers: diagnostics.rejectedProjects,
     },
+
     data: {
       signals,
     },
